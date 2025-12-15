@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use uuid::Uuid;
+
 /// Domain ID bindings from a command input.
 ///
 /// Maps domain ID field names to the values to query for.
@@ -45,6 +47,12 @@ impl From<String> for DomainIdValue {
 
 impl From<&str> for DomainIdValue {
     fn from(value: &str) -> Self {
+        Self::Value(value.to_string())
+    }
+}
+
+impl From<Uuid> for DomainIdValue {
+    fn from(value: Uuid) -> Self {
         Self::Value(value.to_string())
     }
 }

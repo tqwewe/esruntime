@@ -1,0 +1,16 @@
+[package]
+name = "esruntime-sdk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+esruntime-sdk-macros.workspace = true
+serde_core.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+umadb-client.workspace = true
+umadb-dcb.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+

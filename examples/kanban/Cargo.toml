@@ -1,0 +1,15 @@
+[package]
+name = "kanban_example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossterm.workspace = true
+esruntime-sdk.workspace = true
+esruntime-server.workspace = true
+indexmap.workspace = true
+ratatui.workspace = true
+serde = { workspace = true, features = ["derive"] }
+umadb-client.workspace = true
+umadb-dcb.workspace = true
+uuid = { workspace = true, features = ["serde", "v4"] }

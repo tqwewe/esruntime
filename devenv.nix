@@ -3,6 +3,7 @@
 {
   packages = with pkgs; [
     bacon
+    cargo-expand
     protobuf
   ];
 

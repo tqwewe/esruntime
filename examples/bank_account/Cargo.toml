@@ -1,0 +1,15 @@
+[package]
+name = "bank_account_example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum.workspace = true
+esruntime-sdk.workspace = true
+esruntime-server.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio.workspace = true
+umadb-client.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

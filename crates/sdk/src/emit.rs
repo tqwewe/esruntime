@@ -4,17 +4,18 @@ use crate::{domain_id::DomainIdValues, error::SerializationError, event::Event};
 ///
 /// Built using the builder pattern:
 ///
-/// ```rust
+/// ```rust,ignore
 /// Ok(Emit::new()
 ///     .event(SentFunds { ... })
 ///     .event(ReceivedFunds { ... }))
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Emit {
     events: Vec<EmittedEvent>,
 }
 
 /// A serialized event ready for persistence.
+#[derive(Debug)]
 pub struct EmittedEvent {
     /// The event type name
     pub event_type: String,
@@ -38,7 +39,7 @@ impl Emit {
     /// shouldn't happen with well-formed event structs.
     pub fn event<E: Event>(mut self, event: E) -> Self {
         let emitted = EmittedEvent {
-            event_type: event.event_type().to_string(),
+            event_type: E::EVENT_TYPE.to_string(),
             data: event.to_bytes().expect("event serialization failed"),
             domain_ids: event.domain_ids(),
         };
@@ -49,7 +50,7 @@ impl Emit {
     /// Add an event, returning an error if serialization fails.
     pub fn try_event<E: Event>(mut self, event: E) -> Result<Self, SerializationError> {
         let emitted = EmittedEvent {
-            event_type: event.event_type().to_string(),
+            event_type: E::EVENT_TYPE.to_string(),
             data: event.to_bytes()?,
             domain_ids: event.domain_ids(),
         };

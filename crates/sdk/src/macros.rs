@@ -5,13 +5,13 @@
 /// - `__esruntime_event_types` - Returns the event types to query
 /// - `__esruntime_domain_id_bindings` - Returns domain ID bindings from input
 /// - `__esruntime_apply` - Apply an event to the handler
-/// - `__esruntime_execute` - Execute the command
+/// - `__esruntime_handle` - Handle the command
 /// - `__esruntime_alloc` - Allocate memory for the runtime to write into
 /// - `__esruntime_dealloc` - Free memory
 ///
 /// # Usage
 ///
-/// ```rust
+/// ```rust,ignore
 /// export_handler!(MyCommandHandler);
 /// ```
 #[macro_export]
@@ -23,7 +23,7 @@ macro_rules! export_handler {
         }
 
         /// Initialize a new handler instance
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn __esruntime_init() {
             HANDLER.with(|h| {
                 *h.borrow_mut() = Some(<$handler as Default>::default());
@@ -31,10 +31,10 @@ macro_rules! export_handler {
         }
 
         /// Get event types this handler queries (returns JSON array)
-        #[no_mangle]
-        pub extern "C" fn __esruntime_event_types(out_ptr: *mut u8, out_len: *mut usize) {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __esruntime_event_types(out_ptr: *mut u8, out_len: *mut usize) {
             let types =
-                <<$handler as $crate::CommandHandler>::Query as $crate::EventSet>::event_types();
+                <<$handler as $crate::command::Command>::Query as $crate::event::EventSet>::EVENT_TYPES;
             let json = serde_json::to_vec(types).unwrap();
             unsafe {
                 let len = json.len();
@@ -44,8 +44,8 @@ macro_rules! export_handler {
         }
 
         /// Parse input and get domain ID bindings (returns JSON)
-        #[no_mangle]
-        pub extern "C" fn __esruntime_domain_id_bindings(
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __esruntime_domain_id_bindings(
             input_ptr: *const u8,
             input_len: usize,
             out_ptr: *mut u8,
@@ -53,13 +53,13 @@ macro_rules! export_handler {
         ) -> i32 {
             let input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
 
-            let input: <$handler as $crate::CommandHandler>::Input =
+            let input: <$handler as $crate::command::Command>::Input =
                 match serde_json::from_slice(input_bytes) {
                     Ok(i) => i,
                     Err(_) => return -1, // Invalid input
                 };
 
-            let bindings = <_ as $crate::CommandInput>::domain_id_bindings(&input);
+            let bindings = <_ as $crate::command::CommandInput>::domain_id_bindings(&input);
             let json = serde_json::to_vec(&bindings).unwrap();
 
             unsafe {
@@ -72,8 +72,8 @@ macro_rules! export_handler {
         }
 
         /// Apply an event to the handler
-        #[no_mangle]
-        pub extern "C" fn __esruntime_apply(
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __esruntime_apply(
             event_type_ptr: *const u8,
             event_type_len: usize,
             event_data_ptr: *const u8,
@@ -88,7 +88,7 @@ macro_rules! export_handler {
             let event_data = unsafe { std::slice::from_raw_parts(event_data_ptr, event_data_len) };
 
             let event =
-                match <<$handler as $crate::CommandHandler>::Query as $crate::EventSet>::from_event(
+                match <<$handler as $crate::command::Command>::Query as $crate::event::EventSet>::from_event(
                     event_type, event_data,
                 ) {
                     Some(Ok(e)) => e,
@@ -105,9 +105,9 @@ macro_rules! export_handler {
             0 // Success
         }
 
-        /// Execute the command (consumes handler, returns result JSON)
-        #[no_mangle]
-        pub extern "C" fn __esruntime_execute(
+        /// Handles the command (consumes handler, returns result JSON)
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __esruntime_handle(
             input_ptr: *const u8,
             input_len: usize,
             out_ptr: *mut u8,
@@ -115,11 +115,11 @@ macro_rules! export_handler {
         ) -> i32 {
             let input_bytes = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
 
-            let input: <$handler as $crate::CommandHandler>::Input =
+            let input: <$handler as $crate::command::Command>::Input =
                 match serde_json::from_slice(input_bytes) {
                     Ok(i) => i,
                     Err(e) => {
-                        let err = $crate::CommandError::invalid_input(e.to_string());
+                        let err = $crate::error::CommandError::invalid_input(e.to_string());
                         let json =
                             serde_json::to_vec(&ExecuteResultDto::Err((&err).into())).unwrap();
                         unsafe {
@@ -132,7 +132,7 @@ macro_rules! export_handler {
 
             let handler = HANDLER.with(|h| h.borrow_mut().take()).unwrap_or_default();
 
-            let result = handler.execute(input);
+            let result = handler.handle(input);
 
             let dto = match result {
                 Ok(emit) => ExecuteResultDto::Ok(
@@ -165,7 +165,7 @@ macro_rules! export_handler {
         }
 
         /// Allocate memory for the runtime
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn __esruntime_alloc(len: usize) -> *mut u8 {
             let mut buf = Vec::with_capacity(len);
             let ptr = buf.as_mut_ptr();
@@ -174,8 +174,8 @@ macro_rules! export_handler {
         }
 
         /// Free memory
-        #[no_mangle]
-        pub extern "C" fn __esruntime_dealloc(ptr: *mut u8, len: usize) {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn __esruntime_dealloc(ptr: *mut u8, len: usize) {
             unsafe {
                 drop(Vec::from_raw_parts(ptr, 0, len));
             }
@@ -202,18 +202,57 @@ macro_rules! export_handler {
             message: String,
         }
 
-        impl From<&$crate::CommandError> for CommandErrorDto {
-            fn from(err: &$crate::CommandError) -> Self {
+        impl From<&$crate::error::CommandError> for CommandErrorDto {
+            fn from(err: &$crate::error::CommandError) -> Self {
                 Self {
                     code: match err.code {
-                        $crate::ErrorCode::Rejected => "rejected",
-                        $crate::ErrorCode::InvalidInput => "invalid_input",
-                        $crate::ErrorCode::Internal => "internal",
+                        $crate::error::ErrorCode::Rejected => "rejected",
+                        $crate::error::ErrorCode::InvalidInput => "invalid_input",
+                        $crate::error::ErrorCode::Internal => "internal",
                     }
                     .to_string(),
                     message: err.message.clone(),
                 }
             }
         }
+    };
+}
+
+/// Convenience macro for emitting multiple events.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// fn handle(self, input: Input) -> Result<Emit, CommandError> {
+///     Ok(emit![
+///         SentFunds {
+///             account_id: input.source_account,
+///             amount: input.amount,
+///             recipient_id: Some(input.dest_account.clone()),
+///         },
+///         ReceivedFunds {
+///             account_id: input.dest_account,
+///             amount: input.amount,
+///             sender_id: Some(input.source_account),
+///         },
+///     ])
+/// }
+/// ```
+///
+/// Expands to:
+///
+/// ```rust,ignore
+/// Emit::new()
+///     .event(SentFunds { ... })
+///     .event(ReceivedFunds { ... })
+/// ```
+#[macro_export]
+macro_rules! emit {
+    () => {
+        $crate::emit::Emit::new()
+    };
+    ($($event:expr),+ $(,)?) => {
+        $crate::emit::Emit::new()
+            $(.event($event))+
     };
 }

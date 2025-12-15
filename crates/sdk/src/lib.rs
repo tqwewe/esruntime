@@ -10,12 +10,13 @@
 //! 1. Declare which events they need to read (via `EventSet`)
 //! 2. Declare which domain IDs to query (via `CommandInput`)
 //! 3. Rebuild state from historical events (via `apply`)
-//! 4. Make decisions and emit new events (via `execute`)
+//! 4. Make decisions and emit new events (via `handle`)
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use esruntime_sdk::prelude::*;
+//! use serde::Deserialize;
 //! use my_schema::{OpenedAccount, SentFunds};
 //!
 //! #[derive(EventSet)]
@@ -36,7 +37,7 @@
 //!     balance: f64,
 //! }
 //!
-//! impl CommandHandler for Withdraw {
+//! impl Command for Withdraw {
 //!     type Query = Query;
 //!     type Input = Input;
 //!
@@ -47,7 +48,7 @@
 //!         }
 //!     }
 //!
-//!     fn execute(self, input: Input) -> Result<Emit, CommandError> {
+//!     fn handle(self, input: Input) -> Result<Emit, CommandError> {
 //!         if self.balance < input.amount {
 //!             return Err(CommandError::rejected("Insufficient funds"));
 //!         }
@@ -77,9 +78,13 @@ pub mod prelude {
     pub use crate::emit::*;
     pub use crate::error::*;
     pub use crate::event::*;
-    #[allow(unused)]
-    pub use crate::macros::*;
+    pub use crate::{emit, export_handler};
 
     // Re-export derive macros (these would come from esruntime-sdk-macros)
-    // pub use esruntime_sdk_macros::{CommandInput, Event, EventSet};
+    pub use esruntime_sdk_macros::{CommandInput, Event, EventSet};
+}
+
+#[doc(hidden)]
+pub mod __private {
+    pub use serde_json;
 }

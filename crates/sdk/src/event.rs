@@ -7,7 +7,7 @@ use crate::{domain_id::DomainIdValues, error::SerializationError};
 ///
 /// # Example (generated code)
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[derive(Event, Clone, Serialize, Deserialize)]
 /// #[event_type("SentFunds")]
 /// pub struct SentFunds {
@@ -21,7 +21,7 @@ use crate::{domain_id::DomainIdValues, error::SerializationError};
 pub trait Event: Sized {
     /// The event type name as it appears in the event store.
     /// This should match the ESDL event name.
-    fn event_type(&self) -> &'static str;
+    const EVENT_TYPE: &'static str;
 
     /// Serialize this event to bytes (JSON).
     fn to_bytes(&self) -> Result<Vec<u8>, SerializationError>;
@@ -44,7 +44,7 @@ pub trait Event: Sized {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[derive(EventSet)]
 /// enum Query {
 ///     OpenedAccount(OpenedAccount),
@@ -54,7 +54,7 @@ pub trait Event: Sized {
 pub trait EventSet: Sized {
     /// Returns the event type names this set can contain.
     /// Used to build the query to the event store.
-    fn event_types() -> &'static [&'static str];
+    const EVENT_TYPES: &'static [&'static str];
 
     /// Attempt to deserialize an event into this set.
     ///

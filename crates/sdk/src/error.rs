@@ -1,5 +1,9 @@
+use thiserror::Error;
+use umadb_dcb::DCBError;
+
 /// Error returned when a command is rejected or fails.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug, Error)]
+#[error("{code}: {message}")]
 pub struct CommandError {
     /// The error classification
     pub code: ErrorCode,
@@ -7,19 +11,33 @@ pub struct CommandError {
     pub message: String,
 }
 
+/// Error returned when a command is rejected or fails.
+#[derive(Debug, Error)]
+pub enum ExecuteError {
+    #[error(transparent)]
+    Command(#[from] CommandError),
+    #[error(transparent)]
+    DCB(#[from] DCBError),
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
+}
+
 /// Classification of command errors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum ErrorCode {
     /// Business rule violation - the command was understood but rejected.
     /// Example: "Insufficient funds"
+    #[error("rejected")]
     Rejected,
 
     /// The input was malformed or invalid.
     /// Example: "Amount must be positive"
+    #[error("invalid_input")]
     InvalidInput,
 
     /// An unexpected error occurred in the handler.
     /// Example: Deserialization failure, logic bug
+    #[error("internal")]
     Internal,
 }
 
@@ -49,16 +67,9 @@ impl CommandError {
     }
 }
 
-impl std::fmt::Display for CommandError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}: {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for CommandError {}
-
 /// Error during event serialization/deserialization.
-#[derive(Debug)]
+#[derive(Clone, Debug, Error)]
+#[error("serialization error: {message}")]
 pub struct SerializationError {
     pub message: String,
 }
@@ -70,14 +81,6 @@ impl SerializationError {
         }
     }
 }
-
-impl std::fmt::Display for SerializationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "serialization error: {}", self.message)
-    }
-}
-
-impl std::error::Error for SerializationError {}
 
 impl From<serde_json::Error> for SerializationError {
     fn from(err: serde_json::Error) -> Self {
