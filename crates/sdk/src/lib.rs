@@ -61,8 +61,23 @@
 //!     }
 //! }
 //!
-//! export_handler!(Withdraw);
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     let client = UmaDBClient::new("http://0.0.0.0:50051".to_string())
+//!         .connect_async()
+//!         .await?,
+//!
+//!     Withdraw::execute(&client, Input {
+//!         account_id: "bob".to_string(),
+//!         amount: 14.50,
+//!     }).await?;
+//!
+//!     Ok(())
+//! }
 //! ```
+
+// Re-export derive macros (these would come from esruntime-sdk-macros)
+pub use esruntime_sdk_macros::{CommandInput, Event, EventSet};
 
 pub mod command;
 pub mod domain_id;
@@ -75,12 +90,10 @@ mod macros;
 pub mod prelude {
     pub use crate::command::*;
     pub use crate::domain_id::*;
+    pub use crate::emit;
     pub use crate::emit::*;
     pub use crate::error::*;
     pub use crate::event::*;
-    pub use crate::{emit, export_handler};
-
-    // Re-export derive macros (these would come from esruntime-sdk-macros)
     pub use esruntime_sdk_macros::{CommandInput, Event, EventSet};
 }
 
