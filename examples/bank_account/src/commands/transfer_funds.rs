@@ -113,12 +113,12 @@ impl Command for TransferFunds {
             .event(SentFunds {
                 account_id: input.source_account.clone(),
                 amount: input.amount,
-                recipient_id: Some(input.dest_account.clone()),
+                recipient_id: input.dest_account.clone(),
             })
             .event(ReceivedFunds {
                 account_id: input.dest_account,
                 amount: input.amount,
-                sender_id: Some(input.source_account),
+                sender_id: input.source_account,
             }))
     }
 }
@@ -140,19 +140,19 @@ mod tests {
         })
     }
 
-    fn sent(account_id: &str, amount: f64, recipient: Option<&str>) -> Query {
+    fn sent(account_id: &str, amount: f64, recipient_id: &str) -> Query {
         Query::SentFunds(SentFunds {
             account_id: account_id.into(),
             amount,
-            recipient_id: recipient.map(Into::into),
+            recipient_id: recipient_id.into(),
         })
     }
 
-    fn received(account_id: &str, amount: f64, sender: Option<&str>) -> Query {
+    fn received(account_id: &str, amount: f64, sender_id: &str) -> Query {
         Query::ReceivedFunds(ReceivedFunds {
             account_id: account_id.into(),
             amount,
-            sender_id: sender.map(Into::into),
+            sender_id: sender_id.into(),
         })
     }
 
@@ -199,7 +199,7 @@ mod tests {
             [
                 opened("alice", 50.0),
                 opened("bob", 100.0),
-                received("alice", 60.0, Some("bob")),
+                received("alice", 60.0, "bob"),
             ],
         );
 
@@ -217,7 +217,7 @@ mod tests {
             [
                 opened("alice", 100.0),
                 opened("bob", 50.0),
-                sent("alice", 30.0, Some("bob")),
+                sent("alice", 30.0, "bob"),
             ],
         );
 
@@ -331,7 +331,7 @@ mod tests {
             [
                 opened("alice", 100.0),
                 opened("bob", 50.0),
-                sent("alice", 80.0, Some("bob")),
+                sent("alice", 80.0, "bob"),
             ],
         );
 
@@ -395,13 +395,13 @@ mod tests {
         let sent: SentFunds = serde_json::from_slice(&events[0].data).unwrap();
         assert_eq!(sent.account_id, "alice");
         assert_eq!(sent.amount, 30.0);
-        assert_eq!(sent.recipient_id, Some("bob".into()));
+        assert_eq!(sent.recipient_id, "bob");
 
         // Verify ReceivedFunds
         let received: ReceivedFunds = serde_json::from_slice(&events[1].data).unwrap();
         assert_eq!(received.account_id, "bob");
         assert_eq!(received.amount, 30.0);
-        assert_eq!(received.sender_id, Some("alice".into()));
+        assert_eq!(received.sender_id, "alice");
     }
 
     #[test]

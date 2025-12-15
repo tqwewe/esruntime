@@ -9,9 +9,9 @@ use crate::{
 
 #[derive(EventSet)]
 pub enum Query {
-    TaskCreated(TaskCreated),
-    TaskStatusChanged(TaskStatusChanged),
-    TaskDeleted(TaskDeleted),
+    Created(TaskCreated),
+    StatusChanged(TaskStatusChanged),
+    Deleted(TaskDeleted),
 }
 
 #[derive(CommandInput, Deserialize)]
@@ -34,14 +34,14 @@ impl Command for ChangeTaskStatus {
 
     fn apply(&mut self, event: Query) {
         match event {
-            Query::TaskCreated(TaskCreated { status, .. }) => {
+            Query::Created(TaskCreated { status, .. }) => {
                 self.created = true;
                 self.status = Some(status);
             }
-            Query::TaskStatusChanged(TaskStatusChanged { status, .. }) => {
+            Query::StatusChanged(TaskStatusChanged { status, .. }) => {
                 self.status = Some(status);
             }
-            Query::TaskDeleted(TaskDeleted { .. }) => {
+            Query::Deleted(TaskDeleted { .. }) => {
                 self.deleted = true;
             }
         }

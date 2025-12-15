@@ -6,7 +6,7 @@ use crate::{events::TaskCreated, types::TaskStatus};
 
 #[derive(EventSet)]
 pub enum Query {
-    TaskCreated(TaskCreated),
+    Created(TaskCreated),
 }
 
 #[derive(CommandInput, Deserialize)]
@@ -28,7 +28,7 @@ impl Command for CreateTask {
 
     fn apply(&mut self, event: Query) {
         match event {
-            Query::TaskCreated(TaskCreated { .. }) => {
+            Query::Created(TaskCreated { .. }) => {
                 self.created = true;
             }
         }

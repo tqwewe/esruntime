@@ -6,8 +6,8 @@ use crate::events::{TaskCreated, TaskDeleted};
 
 #[derive(EventSet)]
 pub enum Query {
-    TaskCreated(TaskCreated),
-    TaskDeleted(TaskDeleted),
+    Created(TaskCreated),
+    Deleted(TaskDeleted),
 }
 
 #[derive(CommandInput, Deserialize)]
@@ -28,10 +28,10 @@ impl Command for DeleteTask {
 
     fn apply(&mut self, event: Query) {
         match event {
-            Query::TaskCreated(TaskCreated { .. }) => {
+            Query::Created(TaskCreated { .. }) => {
                 self.created = true;
             }
-            Query::TaskDeleted(TaskDeleted { .. }) => {
+            Query::Deleted(TaskDeleted { .. }) => {
                 self.deleted = true;
             }
         }

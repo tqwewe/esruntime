@@ -6,9 +6,9 @@ use crate::events::{TaskCreated, TaskDeleted, TaskRenamed};
 
 #[derive(EventSet)]
 pub enum Query {
-    TaskCreated(TaskCreated),
-    TaskRenamed(TaskRenamed),
-    TaskDeleted(TaskDeleted),
+    Created(TaskCreated),
+    Renamed(TaskRenamed),
+    Deleted(TaskDeleted),
 }
 
 #[derive(CommandInput, Deserialize)]
@@ -31,14 +31,14 @@ impl Command for RenameTask {
 
     fn apply(&mut self, event: Query) {
         match event {
-            Query::TaskCreated(TaskCreated { name, .. }) => {
+            Query::Created(TaskCreated { name, .. }) => {
                 self.created = true;
                 self.name = Some(name);
             }
-            Query::TaskRenamed(TaskRenamed { name, .. }) => {
+            Query::Renamed(TaskRenamed { name, .. }) => {
                 self.name = Some(name);
             }
-            Query::TaskDeleted(TaskDeleted { .. }) => {
+            Query::Deleted(TaskDeleted { .. }) => {
                 self.deleted = true;
             }
         }
