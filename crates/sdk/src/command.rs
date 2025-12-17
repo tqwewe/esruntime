@@ -49,6 +49,52 @@ pub trait CommandInput {
 ///
 /// The handler must implement `Default` as a fresh instance is created
 /// for each command execution.
+///
+/// # Example
+///
+/// ```
+/// #[derive(EventSet)]
+/// enum Query {
+///     OpenedAccount(OpenedAccount),
+///     SentFunds(SentFunds),
+/// }
+///
+/// #[derive(CommandInput, Deserialize)]
+/// struct Input {
+///     #[domain_id]
+///     account_id: String,
+///     amount: f64,
+/// }
+///
+/// #[derive(Default)]
+/// struct Withdraw {
+///     balance: f64,
+/// }
+///
+/// impl Command for Withdraw {
+///     type Query = Query;
+///     type Input = Input;
+///
+///     fn apply(&mut self, event: Query) {
+///         match event {
+///             Query::OpenedAccount(ev) => self.balance = ev.initial_balance,
+///             Query::SentFunds(ev) => self.balance -= ev.amount,
+///         }
+///     }
+///
+///     fn handle(self, input: Input) -> Result<Emit, CommandError> {
+///         if self.balance < input.amount {
+///             return Err(CommandError::rejected("Insufficient funds"));
+///         }
+///         
+///         Ok(Emit::new().event(SentFunds {
+///             account_id: input.account_id,
+///             amount: input.amount,
+///             recipient_id: None,
+///         }))
+///     }
+/// }
+/// ```
 pub trait Command: Default + Send {
     /// The set of event types this handler reads.
     /// Defines the event type filter for the query.
@@ -117,9 +163,15 @@ pub trait Command: Default + Send {
                     tags: event
                         .domain_ids
                         .into_iter()
-                        .filter_map(|(category, id)| match id {
-                            DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
-                            DomainIdValue::None => None,
+                        .filter_map(|(category, id)| {
+                            assert!(
+                                !category.contains(':'),
+                                "domain id categories cannot contain a colon character"
+                            );
+                            match id {
+                                DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
+                                DomainIdValue::None => None,
+                            }
                         })
                         .collect(),
                     data: event.data,
@@ -184,9 +236,15 @@ pub trait Command: Default + Send {
                 tags: event
                     .domain_ids
                     .into_iter()
-                    .filter_map(|(category, id)| match id {
-                        DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
-                        DomainIdValue::None => None,
+                    .filter_map(|(category, id)| {
+                        assert!(
+                            !category.contains(':'),
+                            "domain id categories cannot contain a colon character"
+                        );
+                        match id {
+                            DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
+                            DomainIdValue::None => None,
+                        }
                     })
                     .collect(),
                 data: event.data,
@@ -228,7 +286,7 @@ pub struct ExecuteResult {
 /// giving OR semantics within each field and AND semantics across fields.
 pub fn build_query_items(bindings: &DomainIdBindings, event_types: &[&str]) -> Vec<DCBQueryItem> {
     // Convert bindings to a vec of (field_name, values) for easier iteration
-    let binding_groups: Vec<(&str, &Vec<String>)> = bindings.iter().map(|(k, v)| (*k, v)).collect();
+    let binding_groups: Vec<_> = bindings.iter().map(|(k, v)| (*k, v)).collect();
 
     if binding_groups.is_empty() {
         // No domain IDs - query all events of these types

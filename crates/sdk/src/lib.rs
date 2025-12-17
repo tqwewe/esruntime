@@ -43,8 +43,8 @@
 //!
 //!     fn apply(&mut self, event: Query) {
 //!         match event {
-//!             Query::OpenedAccount(e) => self.balance = e.initial_balance,
-//!             Query::SentFunds(e) => self.balance -= e.amount,
+//!             Query::OpenedAccount(ev) => self.balance = ev.initial_balance,
+//!             Query::SentFunds(ev) => self.balance -= ev.amount,
 //!         }
 //!     }
 //!
@@ -76,7 +76,6 @@
 //! }
 //! ```
 
-// Re-export derive macros (these would come from esruntime-sdk-macros)
 pub use esruntime_sdk_macros::{CommandInput, Event, EventSet};
 
 pub mod command;

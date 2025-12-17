@@ -2,10 +2,12 @@ use crate::{domain_id::DomainIdValues, error::SerializationError};
 
 /// Trait for individual event structs.
 ///
-/// This is implemented by generated event structs from ESDL schemas.
 /// Each event knows its type name and which fields are domain identifiers.
+/// Domain IDs identify which entity an event belongs to for consistency purposes. Reference fields (who you sent to, who you received from) are just data—not domain IDs.
+/// Ask yourself: "If this field changes, does it affect a different entity's consistency boundary?"
+/// If yes, emit a separate event for that entity instead of adding another domain ID.
 ///
-/// # Example (generated code)
+/// # Example
 ///
 /// ```rust,ignore
 /// #[derive(Event, Clone, Serialize, Deserialize)]
@@ -14,13 +16,11 @@ use crate::{domain_id::DomainIdValues, error::SerializationError};
 ///     #[domain_id]
 ///     pub account_id: String,
 ///     pub amount: f64,
-///     #[domain_id]
-///     pub recipient_id: Option<String>,
+///     pub recipient_id: String,
 /// }
 /// ```
 pub trait Event: Sized {
     /// The event type name as it appears in the event store.
-    /// This should match the ESDL event name.
     const EVENT_TYPE: &'static str;
 
     /// Serialize this event to bytes (JSON).
