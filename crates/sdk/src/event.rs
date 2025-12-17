@@ -62,3 +62,19 @@ pub trait EventSet: Sized {
     /// or `Some(Err(...))` if deserialization fails.
     fn from_event(event_type: &str, data: &[u8]) -> Option<Result<Self, SerializationError>>;
 }
+
+/// Used to obtain a reference to a specific event type.
+///
+/// Returns None if the event type `E` is not held by `self`.
+pub trait AsEvent<E> {
+    /// Converts this type to a reference to event `E`, or `None` if the type does not hold the event.
+    fn as_event(&self) -> Option<&E>;
+}
+
+/// Used to obtain an owned specific event type.
+///
+/// Returns None if the event type `E` is not held by `self`.
+pub trait IntoEvent<E> {
+    /// Converts this type to an owned event `E`, or `None` if the type does not hold the event.
+    fn into_event(self) -> Option<E>;
+}

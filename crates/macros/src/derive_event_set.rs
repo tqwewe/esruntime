@@ -25,18 +25,44 @@ impl DeriveEventSet {
             }
         });
 
+        let as_into_event_impls = events.iter().map(|(variant_ident, ty)| {
+            quote! {
+                #[automatically_derived]
+                impl ::esruntime_sdk::event::AsEvent<#ty> for #ident {
+                    fn as_event(&self) -> ::std::option::Option<&#ty> {
+                        match self {
+                            #ident::#variant_ident(ev) => ::std::option::Option::Some(ev),
+                            _ => ::std::option::Option::None,
+                        }
+                    }
+                }
+
+                #[automatically_derived]
+                impl ::esruntime_sdk::event::IntoEvent<#ty> for #ident {
+                    fn into_event(self) -> ::std::option::Option<#ty> {
+                        match self {
+                            #ident::#variant_ident(ev) => ::std::option::Option::Some(ev),
+                            _ => ::std::option::Option::None,
+                        }
+                    }
+                }
+            }
+        });
+
         quote! {
             #[automatically_derived]
             impl ::esruntime_sdk::event::EventSet for #ident {
                 const EVENT_TYPES: &'static [&'static str] = &[ #( <#event_types as ::esruntime_sdk::event::Event>::EVENT_TYPE, )* ];
 
-                fn from_event(event_type: &str, data: &[u8]) -> std::option::Option<std::result::Result<Self, ::esruntime_sdk::error::SerializationError>> {
+                fn from_event(event_type: &str, data: &[u8]) -> ::std::option::Option<::std::result::Result<Self, ::esruntime_sdk::error::SerializationError>> {
                     match event_type {
                         #( #match_arms )*
-                        _ => None
+                        _ => ::std::option::Option::None
                     }
                 }
             }
+
+            #( #as_into_event_impls )*
         }
     }
 }
