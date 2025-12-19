@@ -1,4 +1,8 @@
-use serde_core::Deserialize;
+use std::collections::HashMap;
+
+use chrono::Utc;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use tracing::warn;
 use umadb_dcb::{
     DCBAppendCondition, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery, DCBQueryItem,
@@ -9,8 +13,8 @@ use uuid::Uuid;
 use crate::{
     domain_id::{DomainIdBindings, DomainIdValue},
     emit::Emit,
-    error::{CommandError, ExecuteError},
-    event::EventSet,
+    error::{CommandError, ExecuteError, SerializationError},
+    event::{EventEnvelope, EventSet, StoredEvent},
 };
 
 /// Trait for command input structs that declare domain ID bindings.
@@ -52,7 +56,7 @@ pub trait CommandInput {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// #[derive(EventSet)]
 /// enum Query {
 ///     OpenedAccount(OpenedAccount),
@@ -102,13 +106,14 @@ pub trait Command: Default + Send {
 
     /// The input type for this command.
     /// Defines the domain ID bindings for the query.
-    type Input: CommandInput + for<'de> Deserialize<'de> + Send;
+    type Input: CommandInput + DeserializeOwned + Send;
 
     /// Domain IDs query.
     ///
     /// Defaults to filtering domain ids in the input.
-    fn query(&self, input: &Self::Input) -> DomainIdBindings {
-        input.domain_id_bindings()
+    fn query(&self, input: &Self::Input) -> DCBQuery {
+        let items = build_query_items::<Self::Query>(&input.domain_id_bindings());
+        DCBQuery::with_items(items)
     }
 
     /// Apply a historical event to rebuild state.
@@ -127,17 +132,23 @@ pub trait Command: Default + Send {
     /// Takes `self` by value since the handler is consumed after execution.
     fn handle(self, input: Self::Input) -> Result<Emit, CommandError>;
 
-    /// Execute the command, persisting the resulting events.
+    /// Execute the command with auto-generated context, persisting the resulting events.
     fn execute(
         store: &impl DCBEventStoreAsync,
         input: Self::Input,
     ) -> impl Future<Output = Result<ExecuteResult, ExecuteError>> + Send {
+        Self::execute_with(store, input, CommandContext::new())
+    }
+
+    /// Execute the command with explicit context, persisting the resulting events.
+    fn execute_with(
+        store: &impl DCBEventStoreAsync,
+        input: Self::Input,
+        context: CommandContext,
+    ) -> impl Future<Output = Result<ExecuteResult, ExecuteError>> + Send {
         async move {
             let mut handler = Self::default();
-            let bindings = handler.query(&input);
-            let query_items = build_query_items(&bindings, Self::Query::EVENT_TYPES);
-
-            let query = DCBQuery::with_items(query_items);
+            let query = handler.query(&input);
             let (events, head) = store
                 .read(Some(query.clone()), Some(0), false, None, false)
                 .await?
@@ -145,8 +156,9 @@ pub trait Command: Default + Send {
                 .await?;
 
             for DCBSequencedEvent { position: _, event } in events {
-                let Some(event) =
-                    Self::Query::from_event(&event.event_type, &event.data).transpose()?
+                let StoredEvent { data, .. } =
+                    serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
+                let Some(event) = Self::Query::from_event(&event.event_type, data).transpose()?
                 else {
                     warn!("received event unused by query");
                     continue;
@@ -154,28 +166,37 @@ pub trait Command: Default + Send {
                 handler.apply(event);
             }
 
+            let timestamp = Utc::now();
             let append_events: Vec<_> = handler
                 .handle(input)?
                 .into_events()
                 .into_iter()
-                .map(|event| DCBEvent {
-                    event_type: event.event_type,
-                    tags: event
-                        .domain_ids
-                        .into_iter()
-                        .filter_map(|(category, id)| {
-                            assert!(
-                                !category.contains(':'),
-                                "domain id categories cannot contain a colon character"
-                            );
-                            match id {
-                                DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
-                                DomainIdValue::None => None,
-                            }
-                        })
-                        .collect(),
-                    data: event.data,
-                    uuid: Some(Uuid::new_v4()),
+                .map(|event| {
+                    let envelope = EventEnvelope {
+                        timestamp,
+                        correlation_id: context.correlation_id,
+                        causation_id: context.command_id,
+                    };
+
+                    DCBEvent {
+                        event_type: event.event_type,
+                        tags: event
+                            .domain_ids
+                            .into_iter()
+                            .filter_map(|(category, id)| {
+                                assert!(
+                                    !category.contains(':'),
+                                    "domain id categories cannot contain a colon character"
+                                );
+                                match id {
+                                    DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
+                                    DomainIdValue::None => None,
+                                }
+                            })
+                            .collect(),
+                        data: encode_with_envelope(envelope, event.data),
+                        uuid: Some(Uuid::new_v4()),
+                    }
                 })
                 .collect();
 
@@ -203,52 +224,67 @@ pub trait Command: Default + Send {
         }
     }
 
-    /// Execute the command in a blocking context, persisting the resulting events.
+    /// Execute the command in a blocking context with auto-generated context, persisting the resulting events.
     fn execute_blocking(
         store: &impl DCBEventStoreSync,
         input: Self::Input,
     ) -> Result<ExecuteResult, ExecuteError> {
-        let mut handler = Self::default();
-        let bindings = handler.query(&input);
-        let query_items = build_query_items(&bindings, Self::Query::EVENT_TYPES);
+        Self::execute_blocking_with(store, input, CommandContext::new())
+    }
 
-        let query = DCBQuery::with_items(query_items);
+    /// Execute the command in a blocking context with explicit context, persisting the resulting events.
+    fn execute_blocking_with(
+        store: &impl DCBEventStoreSync,
+        input: Self::Input,
+        context: CommandContext,
+    ) -> Result<ExecuteResult, ExecuteError> {
+        let mut handler = Self::default();
+        let query = handler.query(&input);
         let (events, head) = store
             .read(Some(query.clone()), Some(0), false, None, false)?
             .collect_with_head()?;
 
         for DCBSequencedEvent { position: _, event } in events {
-            let Some(event) =
-                Self::Query::from_event(&event.event_type, &event.data).transpose()?
-            else {
+            let StoredEvent { data, .. } =
+                serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
+            let Some(event) = Self::Query::from_event(&event.event_type, data).transpose()? else {
                 warn!("received event unused by query");
                 continue;
             };
             handler.apply(event);
         }
 
+        let timestamp = Utc::now();
         let append_events: Vec<_> = handler
             .handle(input)?
             .into_events()
             .into_iter()
-            .map(|event| DCBEvent {
-                event_type: event.event_type,
-                tags: event
-                    .domain_ids
-                    .into_iter()
-                    .filter_map(|(category, id)| {
-                        assert!(
-                            !category.contains(':'),
-                            "domain id categories cannot contain a colon character"
-                        );
-                        match id {
-                            DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
-                            DomainIdValue::None => None,
-                        }
-                    })
-                    .collect(),
-                data: event.data,
-                uuid: Some(Uuid::new_v4()),
+            .map(|event| {
+                let envelope = EventEnvelope {
+                    timestamp,
+                    correlation_id: context.correlation_id,
+                    causation_id: context.command_id,
+                };
+
+                DCBEvent {
+                    event_type: event.event_type,
+                    tags: event
+                        .domain_ids
+                        .into_iter()
+                        .filter_map(|(category, id)| {
+                            assert!(
+                                !category.contains(':'),
+                                "domain id categories cannot contain a colon character"
+                            );
+                            match id {
+                                DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
+                                DomainIdValue::None => None,
+                            }
+                        })
+                        .collect(),
+                    data: encode_with_envelope(envelope, event.data),
+                    uuid: Some(Uuid::new_v4()),
+                }
             })
             .collect();
 
@@ -274,49 +310,456 @@ pub trait Command: Default + Send {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandContext {
+    pub command_id: Uuid,           // This execution's ID
+    pub correlation_id: Uuid,       // Original request ID (flows through everything)
+    pub triggered_by: Option<Uuid>, // Event ID that triggered this command (for sagas)
+}
+
+impl CommandContext {
+    /// User-initiated command (HTTP request, CLI, etc.)
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        let id = Uuid::new_v4();
+        Self {
+            command_id: id,
+            correlation_id: id,
+            triggered_by: None,
+        }
+    }
+
+    /// Continue from existing correlation (HTTP request with header)
+    pub fn with_correlation_id(correlation_id: Uuid) -> Self {
+        Self {
+            command_id: Uuid::new_v4(),
+            correlation_id,
+            triggered_by: None,
+        }
+    }
+
+    /// Triggered by an event (saga/process manager)
+    pub fn triggered_by_event(event_id: Uuid, correlation_id: Uuid) -> Self {
+        Self {
+            command_id: Uuid::new_v4(),
+            correlation_id,
+            triggered_by: Some(event_id),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ExecuteResult {
     pub position: Option<u64>,
     pub events: Vec<DCBEvent>,
 }
 
-/// Builds DCB query items from domain ID bindings.
-///
-/// Takes the cartesian product across different domain ID field names,
-/// giving OR semantics within each field and AND semantics across fields.
-pub fn build_query_items(bindings: &DomainIdBindings, event_types: &[&str]) -> Vec<DCBQueryItem> {
-    // Convert bindings to a vec of (field_name, values) for easier iteration
-    let binding_groups: Vec<_> = bindings.iter().map(|(k, v)| (*k, v)).collect();
+pub fn build_query_items<Q: EventSet>(bindings: &DomainIdBindings) -> Vec<DCBQueryItem> {
+    // Group event types by their domain ID field signature
+    // { ["user_id"] => ["UserRegistered", "UserCompletedOnboarding"],
+    //   ["bet_id", "user_id"] => ["BetTracked"] }
+    let mut groups: HashMap<Vec<&str>, Vec<&str>> = HashMap::new();
 
-    if binding_groups.is_empty() {
-        // No domain IDs - query all events of these types
-        return vec![DCBQueryItem::new().types(event_types.iter().copied())];
+    for (event_type, fields) in Q::EVENT_DOMAIN_IDS {
+        // Only include fields that are in our input bindings
+        let mut relevant_fields: Vec<&str> = fields
+            .iter()
+            .filter(|f| bindings.contains_key(*f))
+            .copied()
+            .collect();
+        relevant_fields.sort();
+
+        groups.entry(relevant_fields).or_default().push(event_type);
     }
 
-    // Build cartesian product
-    let mut combinations: Vec<Vec<String>> = vec![vec![]];
+    // Build one QueryItem per group
+    let mut items = Vec::new();
 
-    for (field_name, values) in &binding_groups {
-        let mut new_combinations = Vec::new();
-
-        for existing in &combinations {
-            for value in *values {
-                let mut new_combo = existing.clone();
-                new_combo.push(format!("{field_name}:{value}"));
-                new_combinations.push(new_combo);
-            }
+    for (fields, event_types) in groups {
+        if fields.is_empty() {
+            // No matching domain IDs - query by type only
+            items.push(DCBQueryItem::new().types(event_types.iter().copied()));
+            continue;
         }
 
-        combinations = new_combinations;
+        // Cartesian product for THIS group's fields only
+        let group_bindings: DomainIdBindings = fields
+            .iter()
+            .filter_map(|f| bindings.get(f).map(|v| (*f, v.clone())))
+            .collect();
+
+        let tag_combinations = cartesian_product(&group_bindings);
+
+        for tags in tag_combinations {
+            items.push(
+                DCBQueryItem::new()
+                    .tags(tags)
+                    .types(event_types.iter().copied()),
+            );
+        }
     }
 
-    // Convert each combination to a query item
+    items
+}
+
+fn cartesian_product(bindings: &DomainIdBindings) -> Vec<Vec<String>> {
+    let binding_groups: Vec<_> = bindings.iter().collect();
+
+    if binding_groups.is_empty() {
+        return vec![vec![]];
+    }
+
+    let mut combinations: Vec<Vec<String>> = vec![vec![]];
+
+    for (field_name, values) in binding_groups {
+        combinations = combinations
+            .into_iter()
+            .flat_map(|existing| {
+                values.iter().map(move |value| {
+                    let mut combo = existing.clone();
+                    combo.push(format!("{field_name}:{value}"));
+                    combo
+                })
+            })
+            .collect();
+    }
+
     combinations
-        .into_iter()
-        .map(|tags| {
-            DCBQueryItem::new()
-                .tags(tags)
-                .types(event_types.iter().copied())
-        })
-        .collect()
+}
+
+fn encode_with_envelope(envelope: EventEnvelope, data: Value) -> Vec<u8> {
+    serde_json::to_vec(&StoredEvent {
+        timestamp: envelope.timestamp,
+        correlation_id: envelope.correlation_id,
+        causation_id: envelope.causation_id,
+        data,
+    })
+    .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::SerializationError;
+
+    use super::*;
+
+    fn bindings(pairs: &[(&'static str, &[&str])]) -> DomainIdBindings {
+        pairs
+            .iter()
+            .map(|(k, v)| (*k, v.iter().map(|s| s.to_string()).collect()))
+            .collect()
+    }
+
+    /// Extract tags and types from query items for easier assertion
+    fn extract(items: &[DCBQueryItem]) -> Vec<(Vec<String>, Vec<String>)> {
+        items
+            .iter()
+            .map(|item| {
+                let mut tags = item.tags.clone();
+                let mut types = item.types.clone();
+                tags.sort();
+                types.sort();
+                (tags, types)
+            })
+            .collect()
+    }
+
+    fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
+        v.sort();
+        v
+    }
+
+    // =========================================================================
+    // Mock EventSet implementations for testing
+    // =========================================================================
+
+    struct SingleFieldEvents;
+    impl EventSet for SingleFieldEvents {
+        const EVENT_TYPES: &'static [&'static str] = &["EventA", "EventB"];
+        const EVENT_DOMAIN_IDS: &'static [(&'static str, &'static [&'static str])] =
+            &[("EventA", &["user_id"]), ("EventB", &["user_id"])];
+
+        fn from_event(_: &str, _: Value) -> Option<Result<Self, SerializationError>> {
+            None
+        }
+    }
+
+    struct MixedFieldEvents;
+    impl EventSet for MixedFieldEvents {
+        const EVENT_TYPES: &'static [&'static str] =
+            &["UserRegistered", "UserCompletedOnboarding", "BetTracked"];
+        const EVENT_DOMAIN_IDS: &'static [(&'static str, &'static [&'static str])] = &[
+            ("UserRegistered", &["user_id"]),
+            ("UserCompletedOnboarding", &["user_id"]),
+            ("BetTracked", &["bet_id", "user_id"]),
+        ];
+
+        fn from_event(_: &str, _: Value) -> Option<Result<Self, SerializationError>> {
+            None
+        }
+    }
+
+    struct MultipleFieldsAllShared;
+    impl EventSet for MultipleFieldsAllShared {
+        const EVENT_TYPES: &'static [&'static str] = &["TransferSent", "TransferReceived"];
+        const EVENT_DOMAIN_IDS: &'static [(&'static str, &'static [&'static str])] = &[
+            ("TransferSent", &["account_id", "region_id"]),
+            ("TransferReceived", &["account_id", "region_id"]),
+        ];
+
+        fn from_event(_: &str, _: Value) -> Option<Result<Self, SerializationError>> {
+            None
+        }
+    }
+
+    struct DisjointFieldEvents;
+    impl EventSet for DisjointFieldEvents {
+        const EVENT_TYPES: &'static [&'static str] = &["UserEvent", "OrderEvent"];
+        const EVENT_DOMAIN_IDS: &'static [(&'static str, &'static [&'static str])] =
+            &[("UserEvent", &["user_id"]), ("OrderEvent", &["order_id"])];
+
+        fn from_event(_: &str, _: Value) -> Option<Result<Self, SerializationError>> {
+            None
+        }
+    }
+
+    struct NoDomainsEvent;
+    impl EventSet for NoDomainsEvent {
+        const EVENT_TYPES: &'static [&'static str] = &["GlobalEvent"];
+        const EVENT_DOMAIN_IDS: &'static [(&'static str, &'static [&'static str])] =
+            &[("GlobalEvent", &[])];
+
+        fn from_event(_: &str, _: Value) -> Option<Result<Self, SerializationError>> {
+            None
+        }
+    }
+
+    // =========================================================================
+    // Tests: Basic cases
+    // =========================================================================
+
+    #[test]
+    fn single_field_single_value() {
+        let b = bindings(&[("user_id", &["alice"])]);
+        let items = build_query_items::<SingleFieldEvents>(&b);
+
+        assert_eq!(items.len(), 1);
+        let extracted = extract(&items);
+        assert_eq!(extracted[0].0, vec!["user_id:alice"]);
+        assert_eq!(sorted(extracted[0].1.clone()), vec!["EventA", "EventB"]);
+    }
+
+    #[test]
+    fn single_field_multiple_values() {
+        let b = bindings(&[("user_id", &["alice", "bob"])]);
+        let items = build_query_items::<SingleFieldEvents>(&b);
+
+        assert_eq!(items.len(), 2);
+        let tags: Vec<_> = items.iter().flat_map(|i| &i.tags).collect();
+        assert!(tags.contains(&&"user_id:alice".to_string()));
+        assert!(tags.contains(&&"user_id:bob".to_string()));
+    }
+
+    #[test]
+    fn empty_bindings() {
+        let b = bindings(&[]);
+        let items = build_query_items::<SingleFieldEvents>(&b);
+
+        assert_eq!(items.len(), 1);
+        assert!(items[0].tags.is_empty());
+        assert_eq!(sorted(items[0].types.to_vec()), vec!["EventA", "EventB"]);
+    }
+
+    // =========================================================================
+    // Tests: Mixed domain ID fields (the TrackBet case)
+    // =========================================================================
+
+    #[test]
+    fn mixed_fields_groups_by_domain_signature() {
+        let b = bindings(&[("user_id", &["abc"]), ("bet_id", &["xyz"])]);
+        let items = build_query_items::<MixedFieldEvents>(&b);
+
+        // Should produce 2 query items:
+        // 1. UserRegistered + UserCompletedOnboarding with just user_id
+        // 2. BetTracked with both bet_id and user_id
+        assert_eq!(items.len(), 2);
+
+        let extracted = extract(&items);
+
+        // Find the user-only group
+        let user_only = extracted
+            .iter()
+            .find(|(tags, _)| tags == &vec!["user_id:abc"])
+            .expect("should have user_id only group");
+        assert_eq!(
+            sorted(user_only.1.clone()),
+            vec!["UserCompletedOnboarding", "UserRegistered"]
+        );
+
+        // Find the bet+user group
+        let bet_user = extracted
+            .iter()
+            .find(|(tags, _)| tags.len() == 2)
+            .expect("should have bet_id + user_id group");
+        assert!(bet_user.0.contains(&"bet_id:xyz".to_string()));
+        assert!(bet_user.0.contains(&"user_id:abc".to_string()));
+        assert_eq!(bet_user.1, vec!["BetTracked"]);
+    }
+
+    #[test]
+    fn mixed_fields_partial_binding() {
+        // Only provide user_id, not bet_id
+        let b = bindings(&[("user_id", &["abc"])]);
+        let items = build_query_items::<MixedFieldEvents>(&b);
+
+        // All events share user_id, so should be one group
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].tags, vec!["user_id:abc".to_string()]);
+        assert_eq!(
+            sorted(items[0].types.to_vec()),
+            vec!["BetTracked", "UserCompletedOnboarding", "UserRegistered"]
+        );
+    }
+
+    // =========================================================================
+    // Tests: Multiple fields all shared
+    // =========================================================================
+
+    #[test]
+    fn multiple_fields_all_shared_single_values() {
+        let b = bindings(&[("account_id", &["alice"]), ("region_id", &["us-west"])]);
+        let items = build_query_items::<MultipleFieldsAllShared>(&b);
+
+        assert_eq!(items.len(), 1);
+        let extracted = extract(&items);
+        assert!(extracted[0].0.contains(&"account_id:alice".to_string()));
+        assert!(extracted[0].0.contains(&"region_id:us-west".to_string()));
+        assert_eq!(
+            sorted(extracted[0].1.clone()),
+            vec!["TransferReceived", "TransferSent"]
+        );
+    }
+
+    #[test]
+    fn multiple_fields_all_shared_cartesian_product() {
+        let b = bindings(&[
+            ("account_id", &["alice", "bob"]),
+            ("region_id", &["us-west"]),
+        ]);
+        let items = build_query_items::<MultipleFieldsAllShared>(&b);
+
+        // 2 accounts × 1 region = 2 query items
+        assert_eq!(items.len(), 2);
+
+        let all_tags: Vec<_> = items.iter().map(|i| sorted(i.tags.to_vec())).collect();
+        assert!(all_tags.contains(&vec![
+            "account_id:alice".to_string(),
+            "region_id:us-west".to_string()
+        ]));
+        assert!(all_tags.contains(&vec![
+            "account_id:bob".to_string(),
+            "region_id:us-west".to_string()
+        ]));
+    }
+
+    #[test]
+    fn multiple_fields_full_cartesian_product() {
+        let b = bindings(&[
+            ("account_id", &["alice", "bob"]),
+            ("region_id", &["us-west", "us-east"]),
+        ]);
+        let items = build_query_items::<MultipleFieldsAllShared>(&b);
+
+        // 2 accounts × 2 regions = 4 query items
+        assert_eq!(items.len(), 4);
+    }
+
+    // =========================================================================
+    // Tests: Disjoint domain ID fields
+    // =========================================================================
+
+    #[test]
+    fn disjoint_fields_separate_groups() {
+        let b = bindings(&[("user_id", &["alice"]), ("order_id", &["order-123"])]);
+        let items = build_query_items::<DisjointFieldEvents>(&b);
+
+        // Should produce 2 groups since events don't share fields
+        assert_eq!(items.len(), 2);
+
+        let extracted = extract(&items);
+
+        let user_group = extracted
+            .iter()
+            .find(|(tags, _)| tags.contains(&"user_id:alice".to_string()))
+            .expect("should have user group");
+        assert_eq!(user_group.1, vec!["UserEvent"]);
+
+        let order_group = extracted
+            .iter()
+            .find(|(tags, _)| tags.contains(&"order_id:order-123".to_string()))
+            .expect("should have order group");
+        assert_eq!(order_group.1, vec!["OrderEvent"]);
+    }
+
+    // =========================================================================
+    // Tests: Events with no domain IDs
+    // =========================================================================
+
+    #[test]
+    fn event_with_no_domain_ids() {
+        let b = bindings(&[("some_id", &["value"])]);
+        let items = build_query_items::<NoDomainsEvent>(&b);
+
+        // Event has no domain IDs, so it goes in a group with empty fields
+        assert_eq!(items.len(), 1);
+        assert!(items[0].tags.is_empty());
+        assert_eq!(items[0].types, vec!["GlobalEvent".to_string()]);
+    }
+
+    #[test]
+    fn event_with_no_domain_ids_empty_bindings() {
+        let b = bindings(&[]);
+        let items = build_query_items::<NoDomainsEvent>(&b);
+
+        assert_eq!(items.len(), 1);
+        assert!(items[0].tags.is_empty());
+        assert_eq!(items[0].types, vec!["GlobalEvent".to_string()]);
+    }
+
+    // =========================================================================
+    // Tests: Edge cases
+    // =========================================================================
+
+    #[test]
+    fn binding_not_used_by_any_event() {
+        let b = bindings(&[("user_id", &["alice"]), ("unused_field", &["value"])]);
+        let items = build_query_items::<SingleFieldEvents>(&b);
+
+        // unused_field should be ignored
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].tags, vec!["user_id:alice".to_string()]);
+    }
+
+    #[test]
+    fn multiple_values_same_field_mixed_events() {
+        let b = bindings(&[("user_id", &["alice", "bob"]), ("bet_id", &["xyz"])]);
+        let items = build_query_items::<MixedFieldEvents>(&b);
+
+        // Should have:
+        // - 2 items for user_id only (alice, bob) → UserRegistered, UserCompletedOnboarding
+        // - 2 items for bet_id + user_id (xyz+alice, xyz+bob) → BetTracked
+        assert_eq!(items.len(), 4);
+
+        let user_only_items: Vec<_> = items
+            .iter()
+            .filter(|i| i.types.contains(&"UserRegistered".to_string()))
+            .collect();
+        assert_eq!(user_only_items.len(), 2);
+
+        let bet_items: Vec<_> = items
+            .iter()
+            .filter(|i| i.types.contains(&"BetTracked".to_string()))
+            .collect();
+        assert_eq!(bet_items.len(), 2);
+    }
 }

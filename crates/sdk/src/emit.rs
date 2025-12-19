@@ -1,3 +1,5 @@
+use serde_json::Value;
+
 use crate::{domain_id::DomainIdValues, error::SerializationError, event::Event};
 
 /// A collection of events to be emitted by a command.
@@ -20,7 +22,7 @@ pub struct EmittedEvent {
     /// The event type name
     pub event_type: String,
     /// The serialized event data (JSON)
-    pub data: Vec<u8>,
+    pub data: Value,
     /// Domain ID values for indexing
     pub domain_ids: DomainIdValues,
 }
@@ -38,10 +40,11 @@ impl Emit {
     /// Panics if the event cannot be serialized. In practice this
     /// shouldn't happen with well-formed event structs.
     pub fn event<E: Event>(mut self, event: E) -> Self {
+        let domain_ids = event.domain_ids();
         let emitted = EmittedEvent {
             event_type: E::EVENT_TYPE.to_string(),
-            data: event.to_bytes().expect("event serialization failed"),
-            domain_ids: event.domain_ids(),
+            data: serde_json::to_value(event).expect("event serialization failed"),
+            domain_ids,
         };
         self.events.push(emitted);
         self
@@ -49,10 +52,11 @@ impl Emit {
 
     /// Add an event, returning an error if serialization fails.
     pub fn try_event<E: Event>(mut self, event: E) -> Result<Self, SerializationError> {
+        let domain_ids = event.domain_ids();
         let emitted = EmittedEvent {
             event_type: E::EVENT_TYPE.to_string(),
-            data: event.to_bytes()?,
-            domain_ids: event.domain_ids(),
+            data: serde_json::to_value(event)?,
+            domain_ids,
         };
         self.events.push(emitted);
         Ok(self)

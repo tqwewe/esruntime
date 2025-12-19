@@ -22,7 +22,8 @@ impl DeriveEvent {
             domain_ids,
         } = self;
 
-        let domain_ids_inserts = domain_ids.into_iter().map(|(ident, domain_id)| {
+        let domain_id_fields = domain_ids.values();
+        let domain_ids_inserts = domain_ids.iter().map(|(ident, domain_id)| {
             quote! {
                 ids.insert(#domain_id, ::esruntime_sdk::domain_id::DomainIdValue::from(::std::clone::Clone::clone(&self.#ident)));
             }
@@ -32,14 +33,7 @@ impl DeriveEvent {
             #[automatically_derived]
             impl ::esruntime_sdk::event::Event for #ident {
                 const EVENT_TYPE: &'static str = #event_type;
-
-                fn to_bytes(&self) -> ::std::result::Result<::std::vec::Vec<u8>, ::esruntime_sdk::error::SerializationError> {
-                    ::esruntime_sdk::__private::serde_json::to_vec(self).map_err(::std::convert::Into::into)
-                }
-
-                fn from_bytes(data: &[u8]) -> ::std::result::Result<Self, ::esruntime_sdk::error::SerializationError> {
-                    ::esruntime_sdk::__private::serde_json::from_slice(data).map_err(::std::convert::Into::into)
-                }
+                const DOMAIN_ID_FIELDS: &'static [&'static str] = &[#( #domain_id_fields ,)*];
 
                 fn domain_ids(&self) -> ::esruntime_sdk::domain_id::DomainIdValues {
                     let mut ids = ::std::collections::HashMap::new();

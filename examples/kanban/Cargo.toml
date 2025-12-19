@@ -10,6 +10,7 @@ esruntime-server.workspace = true
 indexmap.workspace = true
 ratatui.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 umadb-client.workspace = true
 umadb-dcb.workspace = true
 uuid = { workspace = true, features = ["serde", "v4"] }

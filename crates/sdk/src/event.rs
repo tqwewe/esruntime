@@ -1,4 +1,24 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
+use uuid::Uuid;
+
 use crate::{domain_id::DomainIdValues, error::SerializationError};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventEnvelope {
+    pub timestamp: DateTime<Utc>,
+    pub correlation_id: Uuid,
+    pub causation_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct StoredEvent {
+    pub timestamp: DateTime<Utc>,
+    pub correlation_id: Uuid,
+    pub causation_id: Uuid,
+    pub data: Value,
+}
 
 /// Trait for individual event structs.
 ///
@@ -19,15 +39,11 @@ use crate::{domain_id::DomainIdValues, error::SerializationError};
 ///     pub recipient_id: String,
 /// }
 /// ```
-pub trait Event: Sized {
+pub trait Event: Serialize + DeserializeOwned + Sized {
     /// The event type name as it appears in the event store.
     const EVENT_TYPE: &'static str;
-
-    /// Serialize this event to bytes (JSON).
-    fn to_bytes(&self) -> Result<Vec<u8>, SerializationError>;
-
-    /// Deserialize an event from bytes (JSON).
-    fn from_bytes(data: &[u8]) -> Result<Self, SerializationError>;
+    /// The domain id fields.
+    const DOMAIN_ID_FIELDS: &'static [&'static str];
 
     /// Returns the domain ID field names and their values for this event instance.
     /// Used by the runtime for indexing and querying.
@@ -55,12 +71,14 @@ pub trait EventSet: Sized {
     /// Returns the event type names this set can contain.
     /// Used to build the query to the event store.
     const EVENT_TYPES: &'static [&'static str];
+    /// List of event domain ids in the query per event type.
+    const EVENT_DOMAIN_IDS: &'static [(&'static str, &'static [&'static str])];
 
     /// Attempt to deserialize an event into this set.
     ///
     /// Returns `None` if the event type is not part of this set,
     /// or `Some(Err(...))` if deserialization fails.
-    fn from_event(event_type: &str, data: &[u8]) -> Option<Result<Self, SerializationError>>;
+    fn from_event(event_type: &str, data: Value) -> Option<Result<Self, SerializationError>>;
 }
 
 /// Used to obtain a reference to a specific event type.

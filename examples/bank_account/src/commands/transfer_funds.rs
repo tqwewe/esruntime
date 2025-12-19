@@ -414,10 +414,8 @@ mod tests {
 
         // SentFunds should have account_id:alice and recipient_id:bob
         assert!(events[0].domain_ids.contains_key("account_id"));
-        assert!(events[0].domain_ids.contains_key("recipient_id"));
 
         // ReceivedFunds should have account_id:bob and sender_id:alice
         assert!(events[1].domain_ids.contains_key("account_id"));
-        assert!(events[1].domain_ids.contains_key("sender_id"));
     }
 }

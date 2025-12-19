@@ -17,10 +17,20 @@ impl DeriveEventSet {
         let Self { ident, events } = self;
 
         let event_types = events.iter().map(|(_, ty)| ty);
+        let event_domain_ids = events.iter().map(|(_, ty)| {
+            quote! {
+                (<#ty as ::esruntime_sdk::event::Event>::EVENT_TYPE, <#ty as ::esruntime_sdk::event::Event>::DOMAIN_ID_FIELDS)
+            }
+        });
+
         let match_arms = events.iter().map(|(variant_ident, ty)| {
             quote! {
                 <#ty as ::esruntime_sdk::event::Event>::EVENT_TYPE => {
-                    ::std::option::Option::Some(<#ty as ::esruntime_sdk::event::Event>::from_bytes(data).map(#ident::#variant_ident))
+                    ::std::option::Option::Some(
+                        ::esruntime_sdk::__private::serde_json::from_value::<#ty>(data)
+                            .map(#ident::#variant_ident)
+                            .map_err(::esruntime_sdk::error::SerializationError::from)
+                    )
                 }
             }
         });
@@ -53,8 +63,9 @@ impl DeriveEventSet {
             #[automatically_derived]
             impl ::esruntime_sdk::event::EventSet for #ident {
                 const EVENT_TYPES: &'static [&'static str] = &[ #( <#event_types as ::esruntime_sdk::event::Event>::EVENT_TYPE, )* ];
+                const EVENT_DOMAIN_IDS: &'static [(&'static str, &'static [&'static str])] = &[ #( #event_domain_ids , )* ];
 
-                fn from_event(event_type: &str, data: &[u8]) -> ::std::option::Option<::std::result::Result<Self, ::esruntime_sdk::error::SerializationError>> {
+                fn from_event(event_type: &str, data: ::esruntime_sdk::__private::serde_json::Value) -> ::std::option::Option<::std::result::Result<Self, ::esruntime_sdk::error::SerializationError>> {
                     match event_type {
                         #( #match_arms )*
                         _ => ::std::option::Option::None
