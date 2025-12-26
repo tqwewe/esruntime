@@ -25,6 +25,7 @@ pub struct CreateTask {
 impl Command for CreateTask {
     type Query = Query;
     type Input = CreateTaskInput;
+    type Error = CommandError;
 
     fn apply(&mut self, event: Query) {
         match event {

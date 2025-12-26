@@ -31,6 +31,7 @@ pub struct ChangeTaskStatus {
 impl Command for ChangeTaskStatus {
     type Query = Query;
     type Input = ChangeTaskStatusInput;
+    type Error = CommandError;
 
     fn apply(&mut self, event: Query) {
         match event {

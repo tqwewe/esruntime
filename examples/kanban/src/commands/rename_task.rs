@@ -28,6 +28,7 @@ pub struct RenameTask {
 impl Command for RenameTask {
     type Query = Query;
     type Input = RenameTaskInput;
+    type Error = CommandError;
 
     fn apply(&mut self, event: Query) {
         match event {

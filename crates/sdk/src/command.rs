@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::warn;
 use umadb_dcb::{
@@ -13,8 +13,8 @@ use uuid::Uuid;
 use crate::{
     domain_id::{DomainIdBindings, DomainIdValue},
     emit::Emit,
-    error::{CommandError, ExecuteError, SerializationError},
-    event::{EventEnvelope, EventSet, StoredEvent},
+    error::{ExecuteError, SerializationError},
+    event::{EventEnvelope, EventSet, StoredEventData},
 };
 
 /// Trait for command input structs that declare domain ID bindings.
@@ -78,6 +78,7 @@ pub trait CommandInput {
 /// impl Command for Withdraw {
 ///     type Query = Query;
 ///     type Input = Input;
+///     type Command = CommandError;
 ///
 ///     fn apply(&mut self, event: Query) {
 ///         match event {
@@ -106,7 +107,16 @@ pub trait Command: Default + Send {
 
     /// The input type for this command.
     /// Defines the domain ID bindings for the query.
-    type Input: CommandInput + DeserializeOwned + Send;
+    type Input: CommandInput + Send;
+
+    /// The error type returned when handling the command.
+    type Error;
+
+    /// Validate the input before querying anything.
+    #[allow(unused_variables)]
+    fn validate(input: &Self::Input) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// Domain IDs query.
     ///
@@ -130,13 +140,13 @@ pub trait Command: Default + Send {
     /// - Return an error rejecting the command
     ///
     /// Takes `self` by value since the handler is consumed after execution.
-    fn handle(self, input: Self::Input) -> Result<Emit, CommandError>;
+    fn handle(self, input: Self::Input) -> Result<Emit, Self::Error>;
 
     /// Execute the command with auto-generated context, persisting the resulting events.
     fn execute(
         store: &impl DCBEventStoreAsync,
         input: Self::Input,
-    ) -> impl Future<Output = Result<ExecuteResult, ExecuteError>> + Send {
+    ) -> impl Future<Output = Result<ExecuteResult, ExecuteError<Self::Error>>> + Send {
         Self::execute_with(store, input, CommandContext::new())
     }
 
@@ -145,8 +155,9 @@ pub trait Command: Default + Send {
         store: &impl DCBEventStoreAsync,
         input: Self::Input,
         context: CommandContext,
-    ) -> impl Future<Output = Result<ExecuteResult, ExecuteError>> + Send {
+    ) -> impl Future<Output = Result<ExecuteResult, ExecuteError<Self::Error>>> + Send {
         async move {
+            Self::validate(&input).map_err(ExecuteError::Validation)?;
             let mut handler = Self::default();
             let query = handler.query(&input);
             let (events, head) = store
@@ -156,7 +167,7 @@ pub trait Command: Default + Send {
                 .await?;
 
             for DCBSequencedEvent { position: _, event } in events {
-                let StoredEvent { data, .. } =
+                let StoredEventData { data, .. } =
                     serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
                 let Some(event) = Self::Query::from_event(&event.event_type, data).transpose()?
                 else {
@@ -168,7 +179,8 @@ pub trait Command: Default + Send {
 
             let timestamp = Utc::now();
             let append_events: Vec<_> = handler
-                .handle(input)?
+                .handle(input)
+                .map_err(ExecuteError::Command)?
                 .into_events()
                 .into_iter()
                 .map(|event| {
@@ -176,6 +188,7 @@ pub trait Command: Default + Send {
                         timestamp,
                         correlation_id: context.correlation_id,
                         causation_id: context.command_id,
+                        triggered_by: context.triggered_by,
                     };
 
                     DCBEvent {
@@ -228,7 +241,7 @@ pub trait Command: Default + Send {
     fn execute_blocking(
         store: &impl DCBEventStoreSync,
         input: Self::Input,
-    ) -> Result<ExecuteResult, ExecuteError> {
+    ) -> Result<ExecuteResult, ExecuteError<Self::Error>> {
         Self::execute_blocking_with(store, input, CommandContext::new())
     }
 
@@ -237,7 +250,8 @@ pub trait Command: Default + Send {
         store: &impl DCBEventStoreSync,
         input: Self::Input,
         context: CommandContext,
-    ) -> Result<ExecuteResult, ExecuteError> {
+    ) -> Result<ExecuteResult, ExecuteError<Self::Error>> {
+        Self::validate(&input).map_err(ExecuteError::Validation)?;
         let mut handler = Self::default();
         let query = handler.query(&input);
         let (events, head) = store
@@ -245,7 +259,7 @@ pub trait Command: Default + Send {
             .collect_with_head()?;
 
         for DCBSequencedEvent { position: _, event } in events {
-            let StoredEvent { data, .. } =
+            let StoredEventData { data, .. } =
                 serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
             let Some(event) = Self::Query::from_event(&event.event_type, data).transpose()? else {
                 warn!("received event unused by query");
@@ -256,7 +270,8 @@ pub trait Command: Default + Send {
 
         let timestamp = Utc::now();
         let append_events: Vec<_> = handler
-            .handle(input)?
+            .handle(input)
+            .map_err(ExecuteError::Command)?
             .into_events()
             .into_iter()
             .map(|event| {
@@ -264,6 +279,7 @@ pub trait Command: Default + Send {
                     timestamp,
                     correlation_id: context.correlation_id,
                     causation_id: context.command_id,
+                    triggered_by: context.triggered_by,
                 };
 
                 DCBEvent {
@@ -428,10 +444,11 @@ fn cartesian_product(bindings: &DomainIdBindings) -> Vec<Vec<String>> {
 }
 
 fn encode_with_envelope(envelope: EventEnvelope, data: Value) -> Vec<u8> {
-    serde_json::to_vec(&StoredEvent {
+    serde_json::to_vec(&StoredEventData {
         timestamp: envelope.timestamp,
         correlation_id: envelope.correlation_id,
         causation_id: envelope.causation_id,
+        triggered_by: envelope.triggered_by,
         data,
     })
     .unwrap()

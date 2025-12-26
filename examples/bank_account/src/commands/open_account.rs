@@ -27,6 +27,7 @@ pub struct OpenAccount {
 impl Command for OpenAccount {
     type Query = Query;
     type Input = OpenAccountInput;
+    type Error = CommandError;
 
     fn apply(&mut self, event: Query) {
         match event {

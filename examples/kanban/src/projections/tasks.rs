@@ -1,6 +1,6 @@
 use std::{sync::Mutex, time::Duration};
 
-use esruntime_sdk::{event::StoredEvent, prelude::EventSet};
+use esruntime_sdk::{event::StoredEventData, prelude::EventSet};
 use indexmap::IndexMap;
 use umadb_client::SyncUmaDBClient;
 use umadb_dcb::{DCBError, DCBEventStoreSync, DCBQuery, DCBQueryItem, DCBSequencedEvent};
@@ -38,7 +38,7 @@ impl TasksProjection {
         )?;
 
         while let Some(DCBSequencedEvent { position: _, event }) = stream.next().transpose()? {
-            let StoredEvent { data, .. } = serde_json::from_slice(&event.data).unwrap();
+            let StoredEventData { data, .. } = serde_json::from_slice(&event.data).unwrap();
             let query = Query::from_event(&event.event_type, data).unwrap().unwrap();
 
             {

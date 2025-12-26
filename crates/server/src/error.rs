@@ -128,10 +128,12 @@ impl IntoResponse for Error {
     }
 }
 
-impl From<ExecuteError> for Error {
-    fn from(err: ExecuteError) -> Self {
+impl<E: std::error::Error> From<ExecuteError<E>> for Error {
+    fn from(err: ExecuteError<E>) -> Self {
         match err {
-            ExecuteError::Command(err) => err.into(),
+            ExecuteError::Command(err) => {
+                Error::new(ErrorStatus::Rejected, "command_rejected").with_message(err.to_string())
+            }
             ExecuteError::DCB(err) => err.into(),
             ExecuteError::Serialization(err) => err.into(),
         }

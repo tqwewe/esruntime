@@ -14,6 +14,7 @@ use esruntime_sdk::prelude::*;
 use ruts::{
     CookieOptions, SessionLayer, store::memory::MemoryStore, tower_cookies::CookieManagerLayer,
 };
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::{io, net::ToSocketAddrs};
 use tower_http::timeout::TimeoutLayer;
@@ -70,7 +71,8 @@ impl CommandRouter {
     pub fn register_command<C>(mut self, name: &str) -> Self
     where
         C: Command + Send,
-        C::Input: Send + 'static,
+        C::Input: DeserializeOwned + Send + 'static,
+        C::Error: std::error::Error,
     {
         let route = |State(state): State<CommandState>, Json(input): Json<Value>| async move {
             let input: C::Input = serde_json::from_value(input).map_err(|err| {

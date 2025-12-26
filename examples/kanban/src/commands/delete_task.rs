@@ -25,6 +25,7 @@ pub struct DeleteTask {
 impl Command for DeleteTask {
     type Query = Query;
     type Input = DeleteTaskInput;
+    type Error = CommandError;
 
     fn apply(&mut self, event: Query) {
         match event {

@@ -13,9 +13,11 @@ pub struct CommandError {
 
 /// Error returned when a command is rejected or fails.
 #[derive(Debug, Error)]
-pub enum ExecuteError {
+pub enum ExecuteError<E> {
     #[error(transparent)]
-    Command(#[from] CommandError),
+    Command(E),
+    #[error(transparent)]
+    Validation(E),
     #[error(transparent)]
     DCB(#[from] DCBError),
     #[error(transparent)]

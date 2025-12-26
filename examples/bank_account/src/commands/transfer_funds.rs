@@ -36,6 +36,7 @@ pub struct TransferFunds {
 impl Command for TransferFunds {
     type Query = Query;
     type Input = TransferFundsInput;
+    type Error = CommandError;
 
     fn apply(&mut self, event: Query) {
         match event {
@@ -392,13 +393,13 @@ mod tests {
         let events = result.unwrap().into_events();
 
         // Verify SentFunds
-        let sent: SentFunds = serde_json::from_slice(&events[0].data).unwrap();
+        let sent: SentFunds = serde_json::from_value(events[0].data.clone()).unwrap();
         assert_eq!(sent.account_id, "alice");
         assert_eq!(sent.amount, 30.0);
         assert_eq!(sent.recipient_id, "bob");
 
         // Verify ReceivedFunds
-        let received: ReceivedFunds = serde_json::from_slice(&events[1].data).unwrap();
+        let received: ReceivedFunds = serde_json::from_value(events[1].data.clone()).unwrap();
         assert_eq!(received.account_id, "bob");
         assert_eq!(received.amount, 30.0);
         assert_eq!(received.sender_id, "alice");

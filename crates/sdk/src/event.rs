@@ -10,14 +10,30 @@ pub struct EventEnvelope {
     pub timestamp: DateTime<Utc>,
     pub correlation_id: Uuid,
     pub causation_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triggered_by: Option<Uuid>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct StoredEvent {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredEvent<T> {
+    pub id: Uuid,
+    pub position: u64,
+    pub event_type: String,
+    pub tags: Vec<String>,
     pub timestamp: DateTime<Utc>,
     pub correlation_id: Uuid,
     pub causation_id: Uuid,
-    pub data: Value,
+    pub triggered_by: Option<Uuid>,
+    pub data: T,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredEventData<T> {
+    pub timestamp: DateTime<Utc>,
+    pub correlation_id: Uuid,
+    pub causation_id: Uuid,
+    pub triggered_by: Option<Uuid>,
+    pub data: T,
 }
 
 /// Trait for individual event structs.
