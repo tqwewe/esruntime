@@ -134,6 +134,9 @@ impl<E: std::error::Error> From<ExecuteError<E>> for Error {
             ExecuteError::Command(err) => {
                 Error::new(ErrorStatus::Rejected, "command_rejected").with_message(err.to_string())
             }
+            ExecuteError::Validation(err) => {
+                Error::new(ErrorStatus::Rejected, "command_rejected").with_message(err.to_string())
+            }
             ExecuteError::DCB(err) => err.into(),
             ExecuteError::Serialization(err) => err.into(),
         }

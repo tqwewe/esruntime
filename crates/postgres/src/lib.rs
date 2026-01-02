@@ -151,15 +151,21 @@ where
             return Ok(());
         };
 
-        self.handler
-            .flush(&mut tx)
-            .await
-            .map_err(ProjectionError::Handler)?;
         self.checkpoint
             .save(&mut tx, self.last_flushed_position, position)
             .await?;
 
+        self.handler
+            .flush(&mut tx)
+            .await
+            .map_err(ProjectionError::Handler)?;
+
         tx.commit().await?;
+
+        self.handler
+            .post_commit()
+            .await
+            .map_err(ProjectionError::Handler)?;
 
         self.events_since_flush = 0;
         self.last_flushed_at = Instant::now();
@@ -273,6 +279,10 @@ pub trait EventHandler {
         &mut self,
         tx: &mut PgTransaction<'static>,
     ) -> impl Future<Output = Result<(), Self::Error>> {
+        async { Ok(()) }
+    }
+
+    fn post_commit(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
         async { Ok(()) }
     }
 }
