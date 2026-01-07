@@ -29,7 +29,7 @@ impl Command for OpenAccount {
     type Input = OpenAccountInput;
     type Error = CommandError;
 
-    fn apply(&mut self, event: Query) {
+    fn apply(&mut self, event: Query, _meta: EventMeta) {
         match event {
             Query::OpenedAccount(OpenedAccount { .. }) => {
                 self.is_open = true;
@@ -37,13 +37,13 @@ impl Command for OpenAccount {
         }
     }
 
-    fn handle(self, input: OpenAccountInput) -> Result<Emit, CommandError> {
+    fn handle(&self, input: &OpenAccountInput) -> Result<Emit, CommandError> {
         if self.is_open {
             return Err(CommandError::rejected("Account already open"));
         }
 
         Ok(emit![OpenedAccount {
-            account_id: input.account_id,
+            account_id: input.account_id.clone(),
             initial_balance: input.initial_balance,
         }])
     }

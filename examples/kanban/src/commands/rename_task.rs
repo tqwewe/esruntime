@@ -30,7 +30,7 @@ impl Command for RenameTask {
     type Input = RenameTaskInput;
     type Error = CommandError;
 
-    fn apply(&mut self, event: Query) {
+    fn apply(&mut self, event: Query, _meta: EventMeta) {
         match event {
             Query::Created(TaskCreated { name, .. }) => {
                 self.created = true;
@@ -45,7 +45,7 @@ impl Command for RenameTask {
         }
     }
 
-    fn handle(self, input: RenameTaskInput) -> Result<Emit, CommandError> {
+    fn handle(&self, input: &RenameTaskInput) -> Result<Emit, CommandError> {
         if !self.created {
             return Err(CommandError::rejected("Task not created"));
         }
@@ -60,7 +60,7 @@ impl Command for RenameTask {
 
         Ok(emit![TaskRenamed {
             task_id: input.task_id,
-            name: input.name,
+            name: input.name.clone(),
         }])
     }
 }

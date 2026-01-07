@@ -27,7 +27,7 @@ impl Command for CreateTask {
     type Input = CreateTaskInput;
     type Error = CommandError;
 
-    fn apply(&mut self, event: Query) {
+    fn apply(&mut self, event: Query, _meta: EventMeta) {
         match event {
             Query::Created(TaskCreated { .. }) => {
                 self.created = true;
@@ -35,14 +35,14 @@ impl Command for CreateTask {
         }
     }
 
-    fn handle(self, input: CreateTaskInput) -> Result<Emit, CommandError> {
+    fn handle(&self, input: &CreateTaskInput) -> Result<Emit, CommandError> {
         if self.created {
             return Err(CommandError::rejected("Task already created"));
         }
 
         Ok(emit![TaskCreated {
             task_id: input.task_id,
-            name: input.name,
+            name: input.name.clone(),
             status: input.status
         }])
     }

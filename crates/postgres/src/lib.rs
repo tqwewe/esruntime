@@ -142,7 +142,7 @@ where
         Ok(true)
     }
 
-    async fn flush(&mut self) -> Result<(), ProjectionError<H::Error>> {
+    async fn flush(&mut self, is_replaying: bool) -> Result<(), ProjectionError<H::Error>> {
         let Some(position) = self.position.take() else {
             return Ok(());
         };
@@ -156,14 +156,14 @@ where
             .await?;
 
         self.handler
-            .flush(&mut tx)
+            .flush(&mut tx, is_replaying)
             .await
             .map_err(ProjectionError::Handler)?;
 
         tx.commit().await?;
 
         self.handler
-            .post_commit()
+            .post_commit(is_replaying)
             .await
             .map_err(ProjectionError::Handler)?;
 
@@ -182,7 +182,7 @@ where
             self.last_flushed_at,
             is_replaying,
         ) {
-            self.flush().await?;
+            self.flush(is_replaying).await?;
         }
 
         Ok(())
@@ -278,11 +278,13 @@ pub trait EventHandler {
     fn flush(
         &mut self,
         tx: &mut PgTransaction<'static>,
+        is_replaying: bool,
     ) -> impl Future<Output = Result<(), Self::Error>> {
         async { Ok(()) }
     }
 
-    fn post_commit(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+    #[allow(unused_variables)]
+    fn post_commit(&mut self, is_replaying: bool) -> impl Future<Output = Result<(), Self::Error>> {
         async { Ok(()) }
     }
 }

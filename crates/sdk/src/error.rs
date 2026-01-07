@@ -71,7 +71,7 @@ impl CommandError {
 
 /// Error during event serialization/deserialization.
 #[derive(Clone, Debug, Error)]
-#[error("serialization error: {message}")]
+#[error("(de)serialization error: {message}")]
 pub struct SerializationError {
     pub message: String,
 }

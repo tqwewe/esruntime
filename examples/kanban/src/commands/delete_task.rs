@@ -27,7 +27,7 @@ impl Command for DeleteTask {
     type Input = DeleteTaskInput;
     type Error = CommandError;
 
-    fn apply(&mut self, event: Query) {
+    fn apply(&mut self, event: Query, _meta: EventMeta) {
         match event {
             Query::Created(TaskCreated { .. }) => {
                 self.created = true;
@@ -38,7 +38,7 @@ impl Command for DeleteTask {
         }
     }
 
-    fn handle(self, input: DeleteTaskInput) -> Result<Emit, CommandError> {
+    fn handle(&self, input: &DeleteTaskInput) -> Result<Emit, CommandError> {
         if !self.created {
             return Err(CommandError::rejected("Task not created"));
         }

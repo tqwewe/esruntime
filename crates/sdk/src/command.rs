@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tracing::warn;
 use umadb_dcb::{
     DCBAppendCondition, DCBEvent, DCBEventStoreAsync, DCBEventStoreSync, DCBQuery, DCBQueryItem,
@@ -11,8 +11,9 @@ use umadb_dcb::{
 use uuid::Uuid;
 
 use crate::{
-    domain_id::{DomainIdBindings, DomainIdValue},
+    domain_id::DomainIdBindings,
     emit::Emit,
+    encode_to_dcb_event,
     error::{ExecuteError, SerializationError},
     event::{EventEnvelope, EventSet, StoredEventData},
 };
@@ -130,7 +131,7 @@ pub trait Command: Default + Send {
     ///
     /// Called once for each event matching the query, in order.
     /// The handler should update its internal state based on the event.
-    fn apply(&mut self, event: Self::Query);
+    fn apply(&mut self, event: Self::Query, meta: EventMeta);
 
     /// Handle the command and produce new events.
     ///
@@ -138,9 +139,17 @@ pub trait Command: Default + Send {
     /// Should validate the command against current state and either:
     /// - Return new events to persist
     /// - Return an error rejecting the command
-    ///
-    /// Takes `self` by value since the handler is consumed after execution.
-    fn handle(self, input: Self::Input) -> Result<Emit, Self::Error>;
+    fn handle(&self, input: &Self::Input) -> Result<Emit, Self::Error>;
+
+    /// Runs async code before committing the events to the event store.
+    #[allow(unused_variables)]
+    fn before_commit(
+        &self,
+        input: &Self::Input,
+        events: &Emit,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async { Ok(()) }
+    }
 
     /// Execute the command with auto-generated context, persisting the resulting events.
     fn execute(
@@ -167,50 +176,28 @@ pub trait Command: Default + Send {
                 .await?;
 
             for DCBSequencedEvent { position: _, event } in events {
-                let StoredEventData { data, .. } =
-                    serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
+                let StoredEventData {
+                    data, timestamp, ..
+                } = serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
                 let Some(event) = Self::Query::from_event(&event.event_type, data).transpose()?
                 else {
                     warn!("received event unused by query");
                     continue;
                 };
-                handler.apply(event);
+                let meta = EventMeta { timestamp };
+                handler.apply(event, meta);
             }
 
             let timestamp = Utc::now();
-            let append_events: Vec<_> = handler
-                .handle(input)
-                .map_err(ExecuteError::Command)?
+            let emit = handler.handle(&input).map_err(ExecuteError::Command)?;
+            handler
+                .before_commit(&input, &emit)
+                .await
+                .map_err(ExecuteError::Command)?;
+            let append_events: Vec<_> = emit
                 .into_events()
                 .into_iter()
-                .map(|event| {
-                    let envelope = EventEnvelope {
-                        timestamp,
-                        correlation_id: context.correlation_id,
-                        causation_id: context.command_id,
-                        triggered_by: context.triggered_by,
-                    };
-
-                    DCBEvent {
-                        event_type: event.event_type,
-                        tags: event
-                            .domain_ids
-                            .into_iter()
-                            .filter_map(|(category, id)| {
-                                assert!(
-                                    !category.contains(':'),
-                                    "domain id categories cannot contain a colon character"
-                                );
-                                match id {
-                                    DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
-                                    DomainIdValue::None => None,
-                                }
-                            })
-                            .collect(),
-                        data: encode_with_envelope(envelope, event.data),
-                        uuid: Some(Uuid::new_v4()),
-                    }
-                })
+                .map(|event| encode_to_dcb_event(event, context.into_event_envelope(timestamp)))
                 .collect();
 
             if append_events.is_empty() {
@@ -259,49 +246,28 @@ pub trait Command: Default + Send {
             .collect_with_head()?;
 
         for DCBSequencedEvent { position: _, event } in events {
-            let StoredEventData { data, .. } =
-                serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
+            let StoredEventData {
+                data, timestamp, ..
+            } = serde_json::from_slice(&event.data).map_err(SerializationError::from)?;
             let Some(event) = Self::Query::from_event(&event.event_type, data).transpose()? else {
                 warn!("received event unused by query");
                 continue;
             };
-            handler.apply(event);
+            let meta = EventMeta { timestamp };
+            handler.apply(event, meta);
         }
 
         let timestamp = Utc::now();
-        let append_events: Vec<_> = handler
-            .handle(input)
-            .map_err(ExecuteError::Command)?
+        let emit = handler.handle(&input).map_err(ExecuteError::Command)?;
+        handler
+            .before_commit(&input, &emit)
+            .now_or_never()
+            .expect("async before_commit is not supportd when executing as blocking")
+            .map_err(ExecuteError::Command)?;
+        let append_events: Vec<_> = emit
             .into_events()
             .into_iter()
-            .map(|event| {
-                let envelope = EventEnvelope {
-                    timestamp,
-                    correlation_id: context.correlation_id,
-                    causation_id: context.command_id,
-                    triggered_by: context.triggered_by,
-                };
-
-                DCBEvent {
-                    event_type: event.event_type,
-                    tags: event
-                        .domain_ids
-                        .into_iter()
-                        .filter_map(|(category, id)| {
-                            assert!(
-                                !category.contains(':'),
-                                "domain id categories cannot contain a colon character"
-                            );
-                            match id {
-                                DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
-                                DomainIdValue::None => None,
-                            }
-                        })
-                        .collect(),
-                    data: encode_with_envelope(envelope, event.data),
-                    uuid: Some(Uuid::new_v4()),
-                }
-            })
+            .map(|event| encode_to_dcb_event(event, context.into_event_envelope(timestamp)))
             .collect();
 
         if append_events.is_empty() {
@@ -362,6 +328,21 @@ impl CommandContext {
             triggered_by: Some(event_id),
         }
     }
+
+    /// Convert into an `EventEnvelope` with a timestamp.
+    pub fn into_event_envelope(self, timestamp: DateTime<Utc>) -> EventEnvelope {
+        EventEnvelope {
+            timestamp,
+            correlation_id: self.correlation_id,
+            causation_id: self.command_id,
+            triggered_by: self.triggered_by,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EventMeta {
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug)]
@@ -441,17 +422,6 @@ fn cartesian_product(bindings: &DomainIdBindings) -> Vec<Vec<String>> {
     }
 
     combinations
-}
-
-fn encode_with_envelope(envelope: EventEnvelope, data: Value) -> Vec<u8> {
-    serde_json::to_vec(&StoredEventData {
-        timestamp: envelope.timestamp,
-        correlation_id: envelope.correlation_id,
-        causation_id: envelope.causation_id,
-        triggered_by: envelope.triggered_by,
-        data,
-    })
-    .unwrap()
 }
 
 #[cfg(test)]

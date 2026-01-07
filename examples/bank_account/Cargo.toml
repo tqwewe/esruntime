@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 axum.workspace = true
+chrono.workspace = true
 esruntime-sdk.workspace = true
 esruntime-server.workspace = true
 serde = { workspace = true, features = ["derive"] }

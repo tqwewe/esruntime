@@ -33,7 +33,7 @@ impl Command for ChangeTaskStatus {
     type Input = ChangeTaskStatusInput;
     type Error = CommandError;
 
-    fn apply(&mut self, event: Query) {
+    fn apply(&mut self, event: Query, _meta: EventMeta) {
         match event {
             Query::Created(TaskCreated { status, .. }) => {
                 self.created = true;
@@ -48,7 +48,7 @@ impl Command for ChangeTaskStatus {
         }
     }
 
-    fn handle(self, input: ChangeTaskStatusInput) -> Result<Emit, CommandError> {
+    fn handle(&self, input: &ChangeTaskStatusInput) -> Result<Emit, CommandError> {
         if !self.created {
             return Err(CommandError::rejected("Task not created"));
         }

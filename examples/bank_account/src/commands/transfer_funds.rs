@@ -38,7 +38,7 @@ impl Command for TransferFunds {
     type Input = TransferFundsInput;
     type Error = CommandError;
 
-    fn apply(&mut self, event: Query) {
+    fn apply(&mut self, event: Query, _meta: EventMeta) {
         match event {
             Query::OpenedAccount(ev) => {
                 self.balances
@@ -58,7 +58,7 @@ impl Command for TransferFunds {
         }
     }
 
-    fn handle(self, input: TransferFundsInput) -> Result<Emit, CommandError> {
+    fn handle(&self, input: &TransferFundsInput) -> Result<Emit, CommandError> {
         // Validate source account
         if input.source_account != "god"
             && !self
@@ -117,20 +117,27 @@ impl Command for TransferFunds {
                 recipient_id: input.dest_account.clone(),
             })
             .event(ReceivedFunds {
-                account_id: input.dest_account,
+                account_id: input.dest_account.clone(),
                 amount: input.amount,
-                sender_id: input.source_account,
+                sender_id: input.source_account.clone(),
             }))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::*;
 
     fn apply_all(handler: &mut TransferFunds, events: impl IntoIterator<Item = Query>) {
         for event in events {
-            handler.apply(event);
+            handler.apply(
+                event,
+                EventMeta {
+                    timestamp: Utc::now(),
+                },
+            );
         }
     }
 
@@ -174,7 +181,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0), opened("bob", 50.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 30.0));
+        let result = handler.handle(&transfer("alice", "bob", 30.0));
 
         let events = result.unwrap().into_events();
         assert_eq!(events.len(), 2);
@@ -187,7 +194,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0), opened("bob", 0.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 100.0));
+        let result = handler.handle(&transfer("alice", "bob", 100.0));
 
         assert!(result.is_ok());
     }
@@ -205,7 +212,7 @@ mod tests {
         );
 
         // Alice now has 50 + 60 = 110
-        let result = handler.handle(transfer("alice", "bob", 100.0));
+        let result = handler.handle(&transfer("alice", "bob", 100.0));
 
         assert!(result.is_ok());
     }
@@ -223,7 +230,7 @@ mod tests {
         );
 
         // Alice now has 100 - 30 = 70
-        let result = handler.handle(transfer("alice", "bob", 70.0));
+        let result = handler.handle(&transfer("alice", "bob", 70.0));
 
         assert!(result.is_ok());
     }
@@ -237,7 +244,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("bob", 50.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 30.0));
+        let result = handler.handle(&transfer("alice", "bob", 30.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::Rejected);
@@ -249,7 +256,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 30.0));
+        let result = handler.handle(&transfer("alice", "bob", 30.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::Rejected);
@@ -260,7 +267,7 @@ mod tests {
     fn fails_when_neither_account_open() {
         let handler = TransferFunds::default();
 
-        let result = handler.handle(transfer("alice", "bob", 30.0));
+        let result = handler.handle(&transfer("alice", "bob", 30.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::Rejected);
@@ -271,7 +278,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0)]);
 
-        let result = handler.handle(transfer("alice", "alice", 30.0));
+        let result = handler.handle(&transfer("alice", "alice", 30.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::Rejected);
@@ -287,7 +294,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0), opened("bob", 50.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 0.0));
+        let result = handler.handle(&transfer("alice", "bob", 0.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidInput);
@@ -299,7 +306,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0), opened("bob", 50.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", -50.0));
+        let result = handler.handle(&transfer("alice", "bob", -50.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidInput);
@@ -315,7 +322,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 50.0), opened("bob", 50.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 100.0));
+        let result = handler.handle(&transfer("alice", "bob", 100.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::Rejected);
@@ -337,7 +344,7 @@ mod tests {
         );
 
         // Alice now has 100 - 80 = 20
-        let result = handler.handle(transfer("alice", "bob", 50.0));
+        let result = handler.handle(&transfer("alice", "bob", 50.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::Rejected);
@@ -353,7 +360,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("bob", 0.0)]);
 
-        let result = handler.handle(transfer("god", "bob", 1000.0));
+        let result = handler.handle(&transfer("god", "bob", 1000.0));
 
         assert!(result.is_ok());
     }
@@ -363,7 +370,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("bob", 0.0)]);
 
-        let result = handler.handle(transfer("god", "bob", 999_999_999.0));
+        let result = handler.handle(&transfer("god", "bob", 999_999_999.0));
 
         assert!(result.is_ok());
     }
@@ -373,7 +380,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0), opened("god", 0.0)]);
 
-        let result = handler.handle(transfer("alice", "god", 50.0));
+        let result = handler.handle(&transfer("alice", "god", 50.0));
 
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::Rejected);
@@ -389,7 +396,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0), opened("bob", 50.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 30.0));
+        let result = handler.handle(&transfer("alice", "bob", 30.0));
         let events = result.unwrap().into_events();
 
         // Verify SentFunds
@@ -410,7 +417,7 @@ mod tests {
         let mut handler = TransferFunds::default();
         apply_all(&mut handler, [opened("alice", 100.0), opened("bob", 50.0)]);
 
-        let result = handler.handle(transfer("alice", "bob", 30.0));
+        let result = handler.handle(&transfer("alice", "bob", 30.0));
         let events = result.unwrap().into_events();
 
         // SentFunds should have account_id:alice and recipient_id:bob

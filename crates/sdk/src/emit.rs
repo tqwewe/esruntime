@@ -40,12 +40,7 @@ impl Emit {
     /// Panics if the event cannot be serialized. In practice this
     /// shouldn't happen with well-formed event structs.
     pub fn event<E: Event>(mut self, event: E) -> Self {
-        let domain_ids = event.domain_ids();
-        let emitted = EmittedEvent {
-            event_type: E::EVENT_TYPE.to_string(),
-            data: serde_json::to_value(event).expect("event serialization failed"),
-            domain_ids,
-        };
+        let emitted = EmittedEvent::new(event);
         self.events.push(emitted);
         self
     }
@@ -75,5 +70,16 @@ impl Emit {
     /// Consume and return the collected events.
     pub fn into_events(self) -> Vec<EmittedEvent> {
         self.events
+    }
+}
+
+impl EmittedEvent {
+    pub fn new<E: Event>(event: E) -> Self {
+        let domain_ids = event.domain_ids();
+        EmittedEvent {
+            event_type: E::EVENT_TYPE.to_string(),
+            data: serde_json::to_value(event).expect("event serialization failed"),
+            domain_ids,
+        }
     }
 }
