@@ -21,7 +21,7 @@ pub fn event(input: TokenStream) -> TokenStream {
     TokenStream::from(input.expand())
 }
 
-#[proc_macro_derive(EventSet)]
+#[proc_macro_derive(EventSet, attributes(scope))]
 pub fn event_set(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveEventSet);
     TokenStream::from(input.expand())
