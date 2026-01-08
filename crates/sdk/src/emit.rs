@@ -1,6 +1,12 @@
 use serde_json::Value;
+use umadb_dcb::DCBEvent;
+use uuid::Uuid;
 
-use crate::{domain_id::DomainIdValues, error::SerializationError, event::Event};
+use crate::{
+    domain_id::{DomainIdValue, DomainIdValues},
+    error::SerializationError,
+    event::{Event, EventEnvelope, StoredEventData},
+};
 
 /// A collection of events to be emitted by a command.
 ///
@@ -82,4 +88,37 @@ impl EmittedEvent {
             domain_ids,
         }
     }
+
+    pub fn into_dcb_event(self, envelope: EventEnvelope) -> DCBEvent {
+        DCBEvent {
+            event_type: self.event_type,
+            tags: self
+                .domain_ids
+                .into_iter()
+                .filter_map(|(category, id)| {
+                    assert!(
+                        !category.contains(':'),
+                        "domain id categories cannot contain a colon character"
+                    );
+                    match id {
+                        DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
+                        DomainIdValue::None => None,
+                    }
+                })
+                .collect(),
+            data: encode_with_envelope(envelope, self.data),
+            uuid: Some(Uuid::new_v4()),
+        }
+    }
+}
+
+pub fn encode_with_envelope(envelope: EventEnvelope, data: Value) -> Vec<u8> {
+    serde_json::to_vec(&StoredEventData {
+        timestamp: envelope.timestamp,
+        correlation_id: envelope.correlation_id,
+        causation_id: envelope.causation_id,
+        triggered_by: envelope.triggered_by,
+        data,
+    })
+    .unwrap()
 }

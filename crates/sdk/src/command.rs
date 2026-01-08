@@ -13,7 +13,6 @@ use uuid::Uuid;
 use crate::{
     domain_id::DomainIdBindings,
     emit::Emit,
-    encode_to_dcb_event,
     error::{ExecuteError, SerializationError},
     event::{EventEnvelope, EventSet, StoredEventData},
 };
@@ -197,7 +196,7 @@ pub trait Command: Default + Send {
             let append_events: Vec<_> = emit
                 .into_events()
                 .into_iter()
-                .map(|event| encode_to_dcb_event(event, context.into_event_envelope(timestamp)))
+                .map(|event| event.into_dcb_event(context.into_event_envelope(timestamp)))
                 .collect();
 
             if append_events.is_empty() {
@@ -267,7 +266,7 @@ pub trait Command: Default + Send {
         let append_events: Vec<_> = emit
             .into_events()
             .into_iter()
-            .map(|event| encode_to_dcb_event(event, context.into_event_envelope(timestamp)))
+            .map(|event| event.into_dcb_event(context.into_event_envelope(timestamp)))
             .collect();
 
         if append_events.is_empty() {
@@ -426,6 +425,8 @@ fn cartesian_product(bindings: &DomainIdBindings) -> Vec<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::Value;
+
     use crate::error::SerializationError;
 
     use super::*;

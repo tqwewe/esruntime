@@ -76,17 +76,7 @@
 //! }
 //! ```
 
-use chrono::{DateTime, Utc};
 pub use esruntime_sdk_macros::{CommandInput, Event, EventSet};
-use serde_json::Value;
-use umadb_dcb::DCBEvent;
-use uuid::Uuid;
-
-use crate::{
-    emit::{Emit, EmittedEvent},
-    event::{EventEnvelope, StoredEventData},
-    prelude::DomainIdValue,
-};
 
 pub mod command;
 pub mod domain_id;
@@ -109,37 +99,4 @@ pub mod prelude {
 #[doc(hidden)]
 pub mod __private {
     pub use serde_json;
-}
-
-pub fn encode_to_dcb_event(event: EmittedEvent, envelope: EventEnvelope) -> DCBEvent {
-    DCBEvent {
-        event_type: event.event_type,
-        tags: event
-            .domain_ids
-            .into_iter()
-            .filter_map(|(category, id)| {
-                assert!(
-                    !category.contains(':'),
-                    "domain id categories cannot contain a colon character"
-                );
-                match id {
-                    DomainIdValue::Value(id) => Some(format!("{category}:{id}")),
-                    DomainIdValue::None => None,
-                }
-            })
-            .collect(),
-        data: encode_with_envelope(envelope, event.data),
-        uuid: Some(Uuid::new_v4()),
-    }
-}
-
-pub fn encode_with_envelope(envelope: EventEnvelope, data: Value) -> Vec<u8> {
-    serde_json::to_vec(&StoredEventData {
-        timestamp: envelope.timestamp,
-        correlation_id: envelope.correlation_id,
-        causation_id: envelope.causation_id,
-        triggered_by: envelope.triggered_by,
-        data,
-    })
-    .unwrap()
 }
