@@ -77,6 +77,18 @@ impl Emit {
     pub fn into_events(self) -> Vec<EmittedEvent> {
         self.events
     }
+
+    /// Gets a reference to the events emitted.
+    pub fn events(&self) -> &[EmittedEvent] {
+        &self.events
+    }
+
+    /// Returns true if the emitted events contains this event type.
+    pub fn contains_event_type<E: Event>(&self) -> bool {
+        self.events
+            .iter()
+            .any(|event| event.event_type == E::EVENT_TYPE)
+    }
 }
 
 impl EmittedEvent {
