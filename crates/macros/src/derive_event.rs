@@ -42,6 +42,21 @@ impl DeriveEvent {
                 }
             }
 
+            #[automatically_derived]
+            impl ::esruntime_sdk::event::AsEvent<#ident> for #ident {
+                #[inline]
+                fn as_event(&self) -> ::std::option::Option<&#ident> {
+                    Some(self)
+                }
+            }
+
+            #[automatically_derived]
+            impl ::esruntime_sdk::event::IntoEvent<#ident> for #ident {
+                #[inline]
+                fn into_event(self) -> ::std::option::Option<#ident> {
+                    Some(self)
+                }
+            }
         }
     }
 }
