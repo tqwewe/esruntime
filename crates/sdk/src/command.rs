@@ -145,9 +145,9 @@ pub trait Command: Default + Send {
     fn before_commit(
         &self,
         input: &Self::Input,
-        events: &Emit,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+        events: Emit,
+    ) -> impl Future<Output = Result<Emit, Self::Error>> + Send {
+        async { Ok(events) }
     }
 
     /// Execute the command with auto-generated context, persisting the resulting events.
@@ -189,8 +189,8 @@ pub trait Command: Default + Send {
 
             let timestamp = Utc::now();
             let emit = handler.handle(&input).map_err(ExecuteError::Command)?;
-            handler
-                .before_commit(&input, &emit)
+            let emit = handler
+                .before_commit(&input, emit)
                 .await
                 .map_err(ExecuteError::Command)?;
             let append_events: Vec<_> = emit
@@ -258,8 +258,8 @@ pub trait Command: Default + Send {
 
         let timestamp = Utc::now();
         let emit = handler.handle(&input).map_err(ExecuteError::Command)?;
-        handler
-            .before_commit(&input, &emit)
+        let emit = handler
+            .before_commit(&input, emit)
             .now_or_never()
             .expect("async before_commit is not supportd when executing as blocking")
             .map_err(ExecuteError::Command)?;
